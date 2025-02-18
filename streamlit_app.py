@@ -55,11 +55,12 @@ elif transformation_choice == "宏酒樽 New Format":
     
     if raw_data_file is not None and mapping_file is not None:
         # Load raw sales data
-        df_raw = pd.read_excel(raw_data_file, sheet_name=None)  # Load all sheets
-        df_raw = list(df_raw.values())[0]  # Use first sheet
+        df_raw = pd.read_excel(raw_data_file, sheet_name=None)
+        df_raw = list(df_raw.values())[0]
         
         # Load mapping file
-        dfs_mapping = pd.read_excel(mapping_file, sheet_name=None)
+        sheets_mapping = pd.ExcelFile(mapping_file).sheet_names
+        dfs_mapping = {sheet: pd.read_excel(mapping_file, sheet_name=sheet) for sheet in sheets_mapping}
         
         # Select required columns
         df_transformed = df_raw.iloc[:, [1, 2, 3, 4, 5, 6]].copy()
@@ -97,7 +98,7 @@ elif transformation_choice == "宏酒樽 New Format":
         df_transformed.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "Outlet Code"], inplace=True)
         
         # Reorder columns to match the template
-        column_order = ["Column1", "Column2", "Column3", "Column4", "PRT Customer Code", "Outlet Name", "Date", "Product Code", "Product Name", "Number of Bottles", "SKU Code"]
+        column_order = ["Column1", "Column2", "Column3", "Column4", "PRT Customer Code", "Outlet Name", "Date", "SKU Code", "Product Code", "Product Name", "Number of Bottles"]
         df_transformed = df_transformed[column_order]
         
         # Save output without headers
