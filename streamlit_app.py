@@ -10,7 +10,6 @@ st.write("Upload an Excel file and choose the transformation format.")
 transformation_choice = st.radio("Select Transformation Format:", ["宏酒樽 Old Format", "宏酒樽 New Format"])
 
 if transformation_choice == "宏酒樽 Old Format":
-    # File uploader
     uploaded_file = st.file_uploader("Upload an Excel file", type=["xlsx"], key="old_format")
     
     if uploaded_file is not None:
@@ -54,54 +53,47 @@ elif transformation_choice == "宏酒樽 New Format":
     mapping_file = st.file_uploader("Upload Mapping File", type=["xlsx"], key="new_mapping")
     
     if raw_data_file is not None and mapping_file is not None:
-        # Load raw sales data
-        df_raw = pd.read_excel(raw_data_file, sheet_name=None)
-        df_raw = list(df_raw.values())[0]
+        df_raw = pd.read_excel(raw_data_file, sheet_name=0)
+        dfs_mapping = pd.read_excel(mapping_file, sheet_name=None)
         
-        # Load mapping file
-        sheets_mapping = pd.ExcelFile(mapping_file).sheet_names
-        dfs_mapping = {sheet: pd.read_excel(mapping_file, sheet_name=sheet) for sheet in sheets_mapping}
-        
-        # Select required columns
         df_transformed = df_raw.iloc[:, [1, 2, 3, 4, 5, 6]].copy()
         df_transformed.columns = ["Date", "Outlet Code", "Outlet Name", "Product Code", "Product Name", "Number of Bottles"]
         
-        # Add fixed columns
         df_transformed.insert(0, "Column1", "INV")
         df_transformed.insert(1, "Column2", "U")
         df_transformed.insert(2, "Column3", "30010085")
         df_transformed.insert(3, "Column4", "宏酒樽 ON")
         
-        # Convert Date format
         df_transformed["Date"] = pd.to_datetime(df_transformed["Date"], errors='coerce').dt.strftime('%Y%m%d')
         
-        # Replace specific Outlet Code values
         df_transformed["Outlet Code"] = df_transformed["Outlet Code"].astype(str).replace({
             "2024-05-01 00:00:00": "5月1日",
             "2024-07-01 00:00:00": "7月1日"
         })
         
-        # Map SKU Code
-        df_sku_mapping = dfs_mapping["SKU Mapping"]
-        df_sku_mapping = df_sku_mapping.drop_duplicates(subset="ASI_CRM_Offtake_Product__c")
-        df_transformed = df_transformed.merge(df_sku_mapping[["ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"]],
-                                              left_on="Product Code", right_on="ASI_CRM_Offtake_Product__c", how="left")
-        df_transformed.rename(columns={"ASI_CRM_SKU_Code__c": "SKU Code"}, inplace=True)
-        df_transformed.drop(columns=["ASI_CRM_Offtake_Product__c"], inplace=True)
+        df_sku_mapping = dfs_mapping.get("SKU Mapping", pd.DataFrame())
+        if not df_sku_mapping.empty:
+            df_sku_mapping = df_sku_mapping.drop_duplicates(subset="ASI_CRM_Offtake_Product__c")
+            df_transformed = df_transformed.merge(
+                df_sku_mapping[["ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"]],
+                left_on="Product Code", right_on="ASI_CRM_Offtake_Product__c", how="left"
+            )
+            df_transformed.rename(columns={"ASI_CRM_SKU_Code__c": "SKU Code"}, inplace=True)
+            df_transformed.drop(columns=["ASI_CRM_Offtake_Product__c"], inplace=True, errors='ignore')
         
-        # Map PRT Customer Code
-        df_customer_mapping = dfs_mapping["Customer Mapping"]
-        df_customer_mapping = df_customer_mapping.drop_duplicates(subset="ASI_CRM_Offtake_Customer_No__c")
-        df_transformed = df_transformed.merge(df_customer_mapping[["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"]],
-                                              left_on="Outlet Code", right_on="ASI_CRM_Offtake_Customer_No__c", how="left")
-        df_transformed.rename(columns={"ASI_CRM_JDE_Cust_No_Formula__c": "PRT Customer Code"}, inplace=True)
-        df_transformed.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "Outlet Code"], inplace=True)
+        df_customer_mapping = dfs_mapping.get("Customer Mapping", pd.DataFrame())
+        if not df_customer_mapping.empty:
+            df_customer_mapping = df_customer_mapping.drop_duplicates(subset="ASI_CRM_Offtake_Customer_No__c")
+            df_transformed = df_transformed.merge(
+                df_customer_mapping[["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"]],
+                left_on="Outlet Code", right_on="ASI_CRM_Offtake_Customer_No__c", how="left"
+            )
+            df_transformed.rename(columns={"ASI_CRM_JDE_Cust_No_Formula__c": "PRT Customer Code"}, inplace=True)
+            df_transformed.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "Outlet Code"], inplace=True, errors='ignore')
         
-        # Reorder columns to match the template
         column_order = ["Column1", "Column2", "Column3", "Column4", "PRT Customer Code", "Outlet Name", "Date", "SKU Code", "Product Code", "Product Name", "Number of Bottles"]
         df_transformed = df_transformed[column_order]
         
-        # Save output without headers
         output_filename = "processed_new_format.xlsx"
         df_transformed.to_excel(output_filename, index=False, header=False)
         
