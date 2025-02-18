@@ -56,7 +56,8 @@ elif transformation_choice == "宏酒樽 New Format":
         df_raw = pd.read_excel(raw_data_file, sheet_name=0)
         dfs_mapping = pd.read_excel(mapping_file, sheet_name=None)
         
-        df_transformed = df_raw.iloc[:, [1, 2, 3, 4, 5, 6]].copy()
+        # Adjusted column selection (shifted right by 1 to correct misalignment)
+        df_transformed = df_raw.iloc[:, [2, 3, 4, 5, 6, 7]].copy()
         df_transformed.columns = ["Date", "Outlet Code", "Outlet Name", "Product Code", "Product Name", "Number of Bottles"]
         
         df_transformed.insert(0, "Column1", "INV")
@@ -75,7 +76,7 @@ elif transformation_choice == "宏酒樽 New Format":
         if not df_sku_mapping.empty:
             df_sku_mapping = df_sku_mapping.drop_duplicates(subset="ASI_CRM_Offtake_Product__c")
             df_transformed = df_transformed.merge(
-                df_sku_mapping[["ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"]],
+                df_sku_mapping["ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"],
                 left_on="Product Code", right_on="ASI_CRM_Offtake_Product__c", how="left"
             )
             df_transformed.rename(columns={"ASI_CRM_SKU_Code__c": "SKU Code"}, inplace=True)
@@ -85,7 +86,7 @@ elif transformation_choice == "宏酒樽 New Format":
         if not df_customer_mapping.empty:
             df_customer_mapping = df_customer_mapping.drop_duplicates(subset="ASI_CRM_Offtake_Customer_No__c")
             df_transformed = df_transformed.merge(
-                df_customer_mapping[["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"]],
+                df_customer_mapping["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"],
                 left_on="Outlet Code", right_on="ASI_CRM_Offtake_Customer_No__c", how="left"
             )
             df_transformed.rename(columns={"ASI_CRM_JDE_Cust_No_Formula__c": "PRT Customer Code"}, inplace=True)
