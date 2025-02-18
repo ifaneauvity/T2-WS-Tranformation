@@ -65,7 +65,9 @@ elif transformation_choice == "宏酒樽 New Format":
         df_transformed.insert(2, "Column3", "30010085")
         df_transformed.insert(3, "Column4", "宏酒樽 ON")
         
-        df_transformed["Date"] = pd.to_datetime(df_transformed["Date"], errors='coerce').dt.strftime('%Y%m%d')
+        # Fix date formatting
+        df_transformed["Date"] = pd.to_datetime(df_transformed["Date"], errors='coerce', infer_datetime_format=True)
+        df_transformed["Date"] = df_transformed["Date"].dt.strftime('%Y%m%d')
         
         df_transformed["Outlet Code"] = df_transformed["Outlet Code"].astype(str).replace({
             "2024-05-01 00:00:00": "5月1日",
@@ -74,23 +76,33 @@ elif transformation_choice == "宏酒樽 New Format":
         
         df_sku_mapping = dfs_mapping.get("SKU Mapping", pd.DataFrame())
         if not df_sku_mapping.empty:
+            df_sku_mapping.columns = df_sku_mapping.columns.str.strip()
+            st.write("Columns in SKU Mapping Sheet:", df_sku_mapping.columns.tolist())
             df_sku_mapping = df_sku_mapping.drop_duplicates(subset="ASI_CRM_Offtake_Product__c")
-            df_transformed = df_transformed.merge(
-                df_sku_mapping["ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"],
-                left_on="Product Code", right_on="ASI_CRM_Offtake_Product__c", how="left"
-            )
-            df_transformed.rename(columns={"ASI_CRM_SKU_Code__c": "SKU Code"}, inplace=True)
-            df_transformed.drop(columns=["ASI_CRM_Offtake_Product__c"], inplace=True, errors='ignore')
+            if "ASI_CRM_Offtake_Product__c" in df_sku_mapping.columns and "ASI_CRM_SKU_Code__c" in df_sku_mapping.columns:
+                df_transformed = df_transformed.merge(
+                    df_sku_mapping[["ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"]],
+                    left_on="Product Code", right_on="ASI_CRM_Offtake_Product__c", how="left"
+                )
+                df_transformed.rename(columns={"ASI_CRM_SKU_Code__c": "SKU Code"}, inplace=True)
+                df_transformed.drop(columns=["ASI_CRM_Offtake_Product__c"], inplace=True, errors='ignore')
+            else:
+                st.error("❌ SKU Mapping sheet is missing required columns.")
         
         df_customer_mapping = dfs_mapping.get("Customer Mapping", pd.DataFrame())
         if not df_customer_mapping.empty:
+            df_customer_mapping.columns = df_customer_mapping.columns.str.strip()
+            st.write("Columns in Customer Mapping Sheet:", df_customer_mapping.columns.tolist())
             df_customer_mapping = df_customer_mapping.drop_duplicates(subset="ASI_CRM_Offtake_Customer_No__c")
-            df_transformed = df_transformed.merge(
-                df_customer_mapping["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"],
-                left_on="Outlet Code", right_on="ASI_CRM_Offtake_Customer_No__c", how="left"
-            )
-            df_transformed.rename(columns={"ASI_CRM_JDE_Cust_No_Formula__c": "PRT Customer Code"}, inplace=True)
-            df_transformed.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "Outlet Code"], inplace=True, errors='ignore')
+            if "ASI_CRM_Offtake_Customer_No__c" in df_customer_mapping.columns and "ASI_CRM_JDE_Cust_No_Formula__c" in df_customer_mapping.columns:
+                df_transformed = df_transformed.merge(
+                    df_customer_mapping[["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"]],
+                    left_on="Outlet Code", right_on="ASI_CRM_Offtake_Customer_No__c", how="left"
+                )
+                df_transformed.rename(columns={"ASI_CRM_JDE_Cust_No_Formula__c": "PRT Customer Code"}, inplace=True)
+                df_transformed.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "Outlet Code"], inplace=True, errors='ignore')
+            else:
+                st.error("❌ Customer Mapping sheet is missing required columns.")
         
         column_order = ["Column1", "Column2", "Column3", "Column4", "PRT Customer Code", "Outlet Name", "Date", "SKU Code", "Product Code", "Product Name", "Number of Bottles"]
         df_transformed = df_transformed[column_order]
