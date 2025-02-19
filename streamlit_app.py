@@ -82,7 +82,8 @@ elif transformation_choice == "宏酒樽 New Format":
         
         df_transformed["Outlet Code"] = df_transformed["Outlet Code"].astype(str).replace({
             "2024-05-01 00:00:00": "5月1日",
-            "2024-07-01 00:00:00": "7月1日"
+            "2024-07-01 00:00:00": "7月1日",
+            "2024-07-02 00:00:00": "07-02"
         })
         
         df_customer_mapping = dfs_mapping["Customer Mapping"]
