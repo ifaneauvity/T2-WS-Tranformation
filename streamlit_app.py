@@ -50,6 +50,7 @@ if transformation_choice == "宏酒樽":
             df_transformed.drop(columns=["ASI_CRM_Offtake_Product__c"], inplace=True)
             
             # ✅ Fix Outlet Code Mapping Issue ✅
+            # Convert Outlet Code to string early to prevent misalignment issues
             df_transformed["Outlet Code"] = df_transformed["Outlet Code"].astype(str)
 
             # Optional replacement only if values are dates (skip if not needed)
@@ -103,9 +104,6 @@ elif transformation_choice == "向日葵":
         current_customer_code = None
         current_date = None
 
-        # ✅ Initialize flag to prevent duplicate processing
-        processed_product = False
-
         # Start processing from row 8 (index 7)
         for i in range(7, len(df)):
             row = df.iloc[i]
@@ -118,22 +116,18 @@ elif transformation_choice == "向日葵":
                 if match:
                     current_customer_code = match.group(1).strip()
                     current_customer = match.group(2).strip()
-                    processed_product = False   # ✅ Reset flag when a new customer is processed
             
             # Check if the row contains a date
             if isinstance(row[0], str) and re.match(r'\d{3}/\d{2}/\d{2}', row[0]):
                 year, month, day = map(int, row[0].split('/'))
                 current_date = f'{year + 1911}{month:02}{day:02}'
             
-            # ✅ Skip product processing if already processed
-            if pd.notna(row[1]) and not processed_product:
+            if pd.notna(row[1]):
                 product_code = row[1]
                 product_name = row[2]
                 quantity = row[3]
                 
                 data.append([current_customer_code, current_customer, current_date, product_code, product_name, quantity])
-                
-                processed_product = True   # ✅ Mark product as processed
         
         result_df = pd.DataFrame(data, columns=['Customer Code', 'Customer Name', 'Date', 'Product Code', 'Product Name', 'Quantity'])
 
