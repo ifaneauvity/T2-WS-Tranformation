@@ -79,9 +79,10 @@ if transformation_choice == "宏酒樽":
                 st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
 
 elif transformation_choice == "向日葵":
-    uploaded_file = st.file_uploader("Upload an Excel file", type=["xlsx"], key="sunflower")
-    
-    if uploaded_file is not None:
+    uploaded_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="sunflower_raw")
+    mapping_file = st.file_uploader("Upload Mapping File", type=["xlsx"], key="sunflower_mapping")
+
+    if uploaded_file is not None and mapping_file is not None:
         df = pd.read_excel(uploaded_file, header=None)
 
         # Create an empty list to store the extracted data
@@ -98,10 +99,8 @@ elif transformation_choice == "向日葵":
             
             # Check if the row contains a customer name (by looking for "客戶名稱")
             if isinstance(row[0], str) and '客戶名稱' in row[0]:
-                # Remove hidden characters and normalize spaces
                 cleaned_text = re.sub(r'[\u200b\ufeff]', '', row[0]).strip()
                 
-                # Extract customer code and name using regex
                 match = re.search(r'客戶編號[:：]\s*([\d\-]+).*客戶名稱[:：]\s*(.*)', cleaned_text)
                 if match:
                     current_customer_code = match.group(1).strip()
@@ -112,16 +111,13 @@ elif transformation_choice == "向日葵":
                 year, month, day = map(int, row[0].split('/'))
                 current_date = f'{year + 1911}{month:02}{day:02}'
             
-            # If there's a product code in column B (row[1]), extract product details
             if pd.notna(row[1]):
                 product_code = row[1]
                 product_name = row[2]
                 quantity = row[3]
                 
-                # Append the extracted data to the list
                 data.append([current_customer_code, current_customer, current_date, product_code, product_name, quantity])
         
-        # Convert to DataFrame
         result_df = pd.DataFrame(data, columns=['Customer Code', 'Customer Name', 'Date', 'Product Code', 'Product Name', 'Quantity'])
 
         # Add fixed columns
@@ -131,7 +127,7 @@ elif transformation_choice == "向日葵":
         result_df.insert(3, 'Column4', '向日葵')
 
         # Map product code to PRT
-        df_mapping = pd.read_excel(uploaded_file, sheet_name='SKU Mapping')
+        df_mapping = pd.read_excel(mapping_file, sheet_name='SKU Mapping')
         result_df = result_df.merge(
             df_mapping.iloc[:, [3, 1]],
             left_on='Product Code',
@@ -145,11 +141,9 @@ elif transformation_choice == "向日葵":
         column_order = ['Column1', 'Column2', 'Column3', 'Column4', 'Customer Code', 'Customer Name', 'Date', 'Product Code PRT', 'Product Code', 'Product Name', 'Quantity']
         result_df = result_df[column_order]
 
-        # Preview data in Streamlit
         st.write("✅ Processed Data Preview:")
         st.dataframe(result_df)
 
-        # Export without headers
         output_filename = "processed_sunflower.xlsx"
         result_df.to_excel(output_filename, index=False, header=False)
 
