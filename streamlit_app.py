@@ -49,6 +49,20 @@ if transformation_choice == "宏酒樽":
             df_transformed.rename(columns={"ASI_CRM_SKU_Code__c": "SKU Code"}, inplace=True)
             df_transformed.drop(columns=["ASI_CRM_Offtake_Product__c"], inplace=True)
             
+            # ✅ Fix Outlet Code Mapping Issue ✅
+            # Convert Outlet Code to string early to prevent misalignment issues
+            df_transformed["Outlet Code"] = df_transformed["Outlet Code"].astype(str)
+
+            # Debugging output to check values:
+            st.write(df_transformed[["Outlet Code"]].head(10))
+
+            # Optional replacement only if values are dates (skip if not needed)
+            df_transformed["Outlet Code"] = df_transformed["Outlet Code"].replace({
+                "2024-05-01 00:00:00": "5月1日",
+                "2024-07-01 00:00:00": "7月1日",
+                "2024-07-02 00:00:00": "07-02"
+            })
+            
             # Map customer codes
             df_customer_mapping = dfs_mapping["Customer Mapping"]
             df_customer_mapping = df_customer_mapping[["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"]].drop_duplicates(subset="ASI_CRM_Offtake_Customer_No__c")
