@@ -50,7 +50,6 @@ if transformation_choice == "宏酒樽":
             df_transformed.drop(columns=["ASI_CRM_Offtake_Product__c"], inplace=True)
             
             # ✅ Fix Outlet Code Mapping Issue ✅
-            # Convert Outlet Code to string early to prevent misalignment issues
             df_transformed["Outlet Code"] = df_transformed["Outlet Code"].astype(str)
 
             # Optional replacement only if values are dates (skip if not needed)
@@ -78,6 +77,16 @@ if transformation_choice == "宏酒樽":
             column_order = ["Column1", "Column2", "Column3", "Column4", "PRT Customer Code", "Outlet Name", "Date", "SKU Code", "Product Code", "Product Name", "Number of Bottles"]
             df_transformed = df_transformed[column_order]
             
+            # ✅ Remove Exact Duplicates ✅
+            duplicates = df_transformed[df_transformed.duplicated(keep=False)]
+
+            if not duplicates.empty:
+                st.warning("⚠️ Possible Duplicates Found:")
+                st.dataframe(duplicates)
+                
+                # Drop duplicates
+                df_transformed = df_transformed.drop_duplicates(keep='first')
+
             # Preview data in Streamlit
             st.write("✅ Processed Data Preview:")
             st.dataframe(df_transformed)
@@ -131,27 +140,15 @@ elif transformation_choice == "向日葵":
         
         result_df = pd.DataFrame(data, columns=['Customer Code', 'Customer Name', 'Date', 'Product Code', 'Product Name', 'Quantity'])
 
-        # Add fixed columns
-        result_df.insert(0, 'Column1', 'INV')
-        result_df.insert(1, 'Column2', 'U')
-        result_df.insert(2, 'Column3', '30010061')
-        result_df.insert(3, 'Column4', '向日葵')
+        # ✅ Remove Exact Duplicates ✅
+        duplicates = result_df[result_df.duplicated(keep=False)]
 
-        # Map product code to PRT
-        df_mapping = pd.read_excel(mapping_file, sheet_name='SKU Mapping')
-        result_df = result_df.merge(
-            df_mapping.iloc[:, [3, 1]],
-            left_on='Product Code',
-            right_on=df_mapping.iloc[:, 3],
-            how='left'
-        )
-        result_df.rename(columns={df_mapping.iloc[:, 1].name: 'Product Code PRT'}, inplace=True)
-        result_df.drop(columns=[df_mapping.iloc[:, 3].name], inplace=True)
+        if not duplicates.empty:
+            st.warning("⚠️ Possible Duplicates Found:")
+            st.dataframe(duplicates)
+            result_df = result_df.drop_duplicates(keep='first')
 
-        # Reorder columns
-        column_order = ['Column1', 'Column2', 'Column3', 'Column4', 'Customer Code', 'Customer Name', 'Date', 'Product Code PRT', 'Product Code', 'Product Name', 'Quantity']
-        result_df = result_df[column_order]
-
+        # Preview data in Streamlit
         st.write("✅ Processed Data Preview:")
         st.dataframe(result_df)
 
