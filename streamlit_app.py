@@ -14,9 +14,9 @@ if transformation_choice == "宏酒樽":
     mapping_file = st.file_uploader("Upload Mapping File", type=["xlsx"], key="new_mapping")
     
     if raw_data_file is not None and mapping_file is not None:
-        # Find the sheet that contains "銷售(夜)" in the name
-        xls = pd.ExcelFile(raw_data_file)
-        sheet_name = next((sheet for sheet in xls.sheet_names if "銷售(夜)" in sheet), None)
+    # Find the sheet that contains "夜" in the name
+    xls = pd.ExcelFile(raw_data_file)
+    sheet_name = next((sheet for sheet in xls.sheet_names if "夜" in sheet), None)
 
         if sheet_name:
             df_raw = xls.parse(sheet_name)
