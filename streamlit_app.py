@@ -59,9 +59,13 @@ if transformation_choice == "宏酒樽":
                 "2024-07-02 00:00:00": "07-02"
             })
             
-            # Map customer codes
+            # ✅🔄 Updated Customer Mapping with 30010085 Filter
             df_customer_mapping = dfs_mapping["Customer Mapping"]
-            df_customer_mapping = df_customer_mapping[["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"]].drop_duplicates(subset="ASI_CRM_Offtake_Customer_No__c")
+            df_customer_mapping = df_customer_mapping[
+                df_customer_mapping["ASI_CRM_Mapping_Cust_No__c"] == 30010085
+            ][["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"]].drop_duplicates(
+                subset="ASI_CRM_Offtake_Customer_No__c"
+            )
             
             df_transformed = df_transformed.merge(
                 df_customer_mapping,
@@ -76,9 +80,6 @@ if transformation_choice == "宏酒樽":
             # Reorder the columns
             column_order = ["Column1", "Column2", "Column3", "Column4", "PRT Customer Code", "Outlet Name", "Date", "SKU Code", "Product Code", "Product Name", "Number of Bottles"]
             df_transformed = df_transformed[column_order]
-            
-            # ✅ Remove exact duplicates
-            df_transformed.drop_duplicates(keep='first', inplace=True)
 
             # Preview data in Streamlit
             st.write("✅ Processed Data Preview:")
