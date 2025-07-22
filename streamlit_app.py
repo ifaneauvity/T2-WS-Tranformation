@@ -247,7 +247,7 @@ elif transformation_choice == "30010010 酒倉盛豐行":
             st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
 
 elif transformation_choice == "30010013 酒田":
-    raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="sakata_raw")
+    raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx", "xls"], key="sakata_raw")
     mapping_file = st.file_uploader("Upload Mapping File", type=["xlsx"], key="sakata_mapping")
 
     if raw_data_file and mapping_file:
