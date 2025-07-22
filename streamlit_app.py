@@ -246,17 +246,14 @@ elif transformation_choice == "30010010 酒倉盛豐行":
         with open(output_filename, "rb") as f:
             st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
 
-elif transformation_choice == "30010013 酒田": 
+elif transformation_choice == "30010013 酒田":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx", "xls"], key="sakata_raw")
     mapping_file = st.file_uploader("Upload Mapping File", type=["xlsx"], key="sakata_mapping")
 
     if raw_data_file and mapping_file:
-        # Load first sheet from Excel
-        xls = pd.ExcelFile(raw_data_file)
-        first_sheet = xls.sheet_names[0]
-        raw_df = pd.read_excel(xls, sheet_name=first_sheet, header=None)
+        raw_df = pd.read_excel(raw_data_file, sheet_name=0, header=None)  # Use first sheet
 
-        # Extract date from A5
+        # Extract ROC date from cell A5
         date_string = str(raw_df.iloc[4, 0])
         match = re.search(r'至\s*(\d{3}/\d{2}/\d{2})', date_string)
         if match:
@@ -273,9 +270,8 @@ elif transformation_choice == "30010013 酒田":
         for _, row in raw_df.iterrows():
             col_a = str(row[0]).strip() if pd.notna(row[0]) else ""
             col_b = str(row[1]).strip() if pd.notna(row[1]) else ""
-            col_f = row[5] if pd.notna(row[5]) else None  # Column F
+            col_f = row.iloc[5] if len(row) > 5 and pd.notna(row.iloc[5]) else None  # SAFE
 
-            # Match product block
             if "貨品編號" in col_a and "貨品名稱" in col_a:
                 match = re.search(r'貨品編號[:：]([A-Z0-9\-]+)\s+貨品名稱[:：](.+)', col_a)
                 if match:
@@ -283,11 +279,9 @@ elif transformation_choice == "30010013 酒田":
                     current_product_name = match.group(2).strip()
                 continue
 
-            # Skip subtotals
             if "小計" in col_a or "小計" in col_b:
                 continue
 
-            # Match transactions by code prefix
             if col_a and col_a.startswith(("D", "C", "E", "M", "P")):
                 if col_f and isinstance(col_f, (int, float)):
                     data.append([
@@ -301,7 +295,7 @@ elif transformation_choice == "30010013 酒田":
             "Product Code", "Product Name", "Quantity"
         ])
 
-        # Customer mapping
+        # Load customer mapping
         mapping_customer = pd.read_excel(mapping_file, sheet_name="Customer Mapping")
         mapping_customer = mapping_customer[[
             "ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"
@@ -317,7 +311,7 @@ elif transformation_choice == "30010013 酒田":
         df_cleaned["Customer Code"] = df_cleaned["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
         df_cleaned.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
 
-        # SKU mapping
+        # Load SKU mapping
         mapping_sku = pd.read_excel(mapping_file, sheet_name="SKU Mapping")
         mapping_sku = mapping_sku[[
             "ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"
@@ -334,7 +328,7 @@ elif transformation_choice == "30010013 酒田":
         df_cleaned.insert(product_code_index, "PRT Product Code", df_cleaned["ASI_CRM_SKU_Code__c"].astype(str).str.strip())
         df_cleaned.drop(columns=["ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"], inplace=True)
 
-        # Insert fixed columns
+        # Insert fixed identifier columns
         df_cleaned.insert(0, "Column1", "INV")
         df_cleaned.insert(1, "Column2", "U")
         df_cleaned.insert(2, "Column3", "30010013")
@@ -348,3 +342,4 @@ elif transformation_choice == "30010013 酒田":
 
         with open(output_filename, "rb") as f:
             st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
+
