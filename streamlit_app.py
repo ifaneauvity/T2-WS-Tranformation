@@ -7,9 +7,9 @@ st.title("📊 WS Transformation")
 st.write("Upload an Excel file and choose the transformation format.")
 
 # Select transformation format
-transformation_choice = st.radio("Select Transformation Format:", ["宏酒樽", "向日葵", "30010010 酒倉盛豐行", "30010013 酒田"])
+transformation_choice = st.radio("Select Transformation Format:", ["30010085 宏酒樽 (夜)", "30010203 宏酒樽 (日)", "30010061 向日葵", "30010010 酒倉盛豐行", "30010013 酒田"])
 
-if transformation_choice == "宏酒樽":
+if transformation_choice == "30010085 宏酒樽 (夜)":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="new_raw")
     mapping_file = st.file_uploader("Upload Mapping File", type=["xlsx"], key="new_mapping")
     
@@ -92,7 +92,90 @@ if transformation_choice == "宏酒樽":
             with open(output_filename, "rb") as f:
                 st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
 
-elif transformation_choice == "向日葵":
+elif transformation_choice == "宏酒樽 (日)":
+    raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="new_raw")
+    mapping_file = st.file_uploader("Upload Mapping File", type=["xlsx"], key="new_mapping")
+    
+    if raw_data_file is not None and mapping_file is not None:
+        # Find the sheet that contains "日" in the name
+        xls = pd.ExcelFile(raw_data_file)
+        sheet_name = next((sheet for sheet in xls.sheet_names if "日" in sheet), None)
+
+        if sheet_name:
+            df_raw = xls.parse(sheet_name)
+            
+            sheets_mapping = pd.ExcelFile(mapping_file).sheet_names  
+            dfs_mapping = {sheet: pd.read_excel(mapping_file, sheet_name=sheet) for sheet in sheets_mapping}
+            
+            df_transformed = df_raw.iloc[:, [1, 2, 3, 4, 5, 6]].copy()
+            df_transformed.columns = ["Date", "Outlet Code", "Outlet Name", "Product Code", "Product Name", "Number of Bottles"]
+            
+            # Add fixed columns
+            df_transformed.insert(0, "Column1", "INV")
+            df_transformed.insert(1, "Column2", "U")
+            df_transformed.insert(2, "Column3", "30010203")
+            df_transformed.insert(3, "Column4", "宏酒樽 OFF")
+            
+            df_transformed["Date"] = pd.to_datetime(df_transformed["Date"]).dt.strftime('%Y%m%d')
+            
+            # Map product codes
+            df_sku_mapping = dfs_mapping["SKU Mapping"]
+            df_sku_mapping = df_sku_mapping[["ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"]].drop_duplicates(subset="ASI_CRM_Offtake_Product__c")
+            
+            df_transformed = df_transformed.merge(
+                df_sku_mapping,
+                left_on="Product Code",
+                right_on="ASI_CRM_Offtake_Product__c",
+                how="left"
+            )
+            
+            df_transformed.rename(columns={"ASI_CRM_SKU_Code__c": "SKU Code"}, inplace=True)
+            df_transformed.drop(columns=["ASI_CRM_Offtake_Product__c"], inplace=True)
+            
+            # ✅ Fix Outlet Code Mapping Issue ✅
+            df_transformed["Outlet Code"] = df_transformed["Outlet Code"].astype(str)
+
+            # Optional replacement only if values are dates (skip if not needed)
+            df_transformed["Outlet Code"] = df_transformed["Outlet Code"].replace({
+                "2024-05-01 00:00:00": "5月1日",
+                "2024-07-01 00:00:00": "7月1日",
+                "2024-07-02 00:00:00": "07-02"
+            })
+            
+            # ✅🔄 Updated Customer Mapping with 30010085 Filter
+            df_customer_mapping = dfs_mapping["Customer Mapping"]
+            df_customer_mapping = df_customer_mapping[
+                df_customer_mapping["ASI_CRM_Mapping_Cust_No__c"] == 30010203
+            ][["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"]].drop_duplicates(
+                subset="ASI_CRM_Offtake_Customer_No__c"
+            )
+            
+            df_transformed = df_transformed.merge(
+                df_customer_mapping,
+                left_on="Outlet Code",
+                right_on="ASI_CRM_Offtake_Customer_No__c",
+                how="left"
+            )
+            
+            df_transformed.rename(columns={"ASI_CRM_JDE_Cust_No_Formula__c": "PRT Customer Code"}, inplace=True)
+            df_transformed.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "Outlet Code"], inplace=True)
+            
+            # Reorder the columns
+            column_order = ["Column1", "Column2", "Column3", "Column4", "PRT Customer Code", "Outlet Name", "Date", "SKU Code", "Product Code", "Product Name", "Number of Bottles"]
+            df_transformed = df_transformed[column_order]
+
+            # Preview data in Streamlit
+            st.write("✅ Processed Data Preview:")
+            st.dataframe(df_transformed)
+            
+            # Export without headers
+            output_filename = "processed_macro.xlsx"
+            df_transformed.to_excel(output_filename, index=False, header=False)
+            
+            with open(output_filename, "rb") as f:
+                st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
+
+elif transformation_choice == "30010061 向日葵":
     uploaded_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="sunflower_raw")
     mapping_file = st.file_uploader("Upload Mapping File", type=["xlsx"], key="sunflower_mapping")
 
