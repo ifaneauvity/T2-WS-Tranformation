@@ -92,7 +92,7 @@ if transformation_choice == "30010085 宏酒樽 (夜)":
             with open(output_filename, "rb") as f:
                 st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
 
-elif transformation_choice == "宏酒樽 (日)":
+elif transformation_choice == "30010203  宏酒樽 (日)":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="new_raw")
     mapping_file = st.file_uploader("Upload Mapping File", type=["xlsx"], key="new_mapping")
     
