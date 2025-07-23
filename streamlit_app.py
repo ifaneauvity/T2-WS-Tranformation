@@ -444,22 +444,25 @@ elif transformation_choice == "30010059 誠邦有限公司":
             col_d = str(row[3]).strip() if pd.notna(row[3]) else ""
             col_e = row[4] if pd.notna(row[4]) else None
 
-            if "貨品編號:" in col_a:
-                match = re.search(r"貨品編號:\s*\[([^\]]+)\]\s*(.+)", col_a)
+            # Clean invisible characters in col_a
+            col_a_clean = col_a.replace('\u3000', ' ').replace('\xa0', ' ').strip()
+
+            if "貨品編號:" in col_a_clean:
+                match = re.search(r"貨品編號:\s*\[([^\]]+)\]\s*(.+)", col_a_clean)
                 if match:
                     current_product_code = match.group(1).strip()
                     current_product_name = match.group(2).strip()
                 continue
 
-            if "合計" in col_a or "小計" in col_a:
+            if "合計" in col_a_clean or "小計" in col_a_clean:
                 continue
 
-            if re.match(r"\\d{4}/\\d{2}/\\d{2}", col_a) and col_c and isinstance(col_e, (int, float)):
+            if re.match(r"\d{4}/\d{2}/\d{2}", col_a_clean) and col_c and isinstance(col_e, (int, float)):
                 try:
-                    y, m, d = map(int, col_a.split("/"))
+                    y, m, d = map(int, col_a_clean.split("/"))
                     gregorian_date = f"{y + 1911}{m:02d}{d:02d}"
                 except:
-                    gregorian_date = col_a
+                    gregorian_date = col_a_clean
 
                 data.append([
                     col_c, col_d, gregorian_date,
@@ -489,7 +492,7 @@ elif transformation_choice == "30010059 誠邦有限公司":
             right_on="ASI_CRM_Offtake_Customer_No__c",
             how="left"
         )
-        df_cleaned["Customer Code"] = df_cleaned["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.replace(r"\\.0$", "", regex=True)
+        df_cleaned["Customer Code"] = df_cleaned["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.replace(r"\.0$", "", regex=True)
         df_cleaned.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
 
         df_sku_mapping = dfs_mapping["SKU Mapping"]
@@ -524,4 +527,3 @@ elif transformation_choice == "30010059 誠邦有限公司":
 
         with open(output_filename, "rb") as f:
             st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
-
