@@ -445,7 +445,7 @@ elif transformation_choice == "30010059 誠邦有限公司":
             col_e = row[4] if pd.notna(row[4]) else None
 
             if "貨品編號:" in col_a:
-                match = re.search(r"貨品編號:\s*\\[([^\\]]+)\\]\s*(.+)", col_a)
+                match = re.search(r"貨品編號:\s*\[([^\]]+)\]\s*(.+)", col_a)
                 if match:
                     current_product_code = match.group(1).strip()
                     current_product_name = match.group(2).strip()
