@@ -527,3 +527,90 @@ elif transformation_choice == "30010059 誠邦有限公司":
 
         with open(output_filename, "rb") as f:
             st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
+
+elif transformation_choice == "30010315 圳程":
+    uploaded_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="zhengcheng_raw")
+    mapping_file = st.file_uploader("Upload Mapping File", type=["xlsx"], key="zhengcheng_mapping")
+
+    if uploaded_file and mapping_file:
+        df_raw = pd.read_excel(uploaded_file, header=None)
+
+        data = []
+        current_product_code = None
+        current_product_name = None
+
+        # Extract date from cell A5 using the last ~ date
+        raw_date_cell = str(df_raw.iloc[4, 0])
+        match = re.findall(r'~\s*(\d{3}/\d{2}/\d{2})', raw_date_cell)
+        if match:
+            last_date = match[-1]
+            y, m, d = map(int, last_date.split('/'))
+            converted_date = f"{y + 1911}{m:02d}{d:02d}"
+        else:
+            converted_date = None
+
+        for _, row in df_raw.iterrows():
+            col_a = str(row[0]).strip() if pd.notna(row[0]) else ""
+            col_b = str(row[1]).strip() if pd.notna(row[1]) else ""
+            col_c = str(row[2]).strip() if pd.notna(row[2]) else ""
+            col_d = row[3] if pd.notna(row[3]) else None
+
+            # Match product code and name
+            if "貨品編號" in col_a and "貨品名稱" in col_a:
+                match = re.search(r"貨品編號[:：]([A-Z0-9\-]+)\s+貨品名稱[:：](.+)", col_a)
+                if match:
+                    current_product_code = match.group(1).strip()
+                    current_product_name = match.group(2).strip()
+                continue
+
+            if "小計" in col_a or "小計" in col_b:
+                continue
+
+            if col_a and col_b and isinstance(col_d, (int, float)):
+                data.append([
+                    col_a, col_b, converted_date,
+                    current_product_code, current_product_name,
+                    int(col_d)
+                ])
+
+        df = pd.DataFrame(data, columns=[
+            "Customer Code", "Customer Name", "Date",
+            "Product Code", "Product Name", "Quantity"
+        ])
+
+        # Load mappings
+        dfs_mapping = {
+            sheet: pd.read_excel(mapping_file, sheet_name=sheet)
+            for sheet in pd.ExcelFile(mapping_file).sheet_names
+        }
+
+        df_customer = dfs_mapping["Customer Mapping"]
+        df_customer = df_customer[df_customer["ASI_CRM_Mapping_Cust_No__c"] == 30010315]
+        df_customer = df_customer[["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"]].drop_duplicates()
+
+        df = df.merge(df_customer, left_on="Customer Code", right_on="ASI_CRM_Offtake_Customer_No__c", how="left")
+        df["Customer Code"] = df["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.replace(r"\.0$", "", regex=True)
+        df.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
+
+        df_sku = dfs_mapping["SKU Mapping"]
+        df_sku = df_sku[["ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"]].drop_duplicates()
+
+        df = df.merge(df_sku, left_on="Product Code", right_on="ASI_CRM_Offtake_Product__c", how="left")
+        insert_index = df.columns.get_loc("Product Code")
+        df.insert(insert_index, "PRT Product Code", df["ASI_CRM_SKU_Code__c"].astype(str).str.strip())
+        df.drop(columns=["ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"], inplace=True)
+
+        df.insert(0, "Col_1", "INV")
+        df.insert(1, "Col_2", "U")
+        df.insert(2, "Col_3", "30010315")
+        df.insert(3, "Col_4", "圳程有限公司")
+
+        st.write("✅ Processed Data Preview:")
+        st.dataframe(df)
+
+        output_filename = "30010315_transformation.xlsx"
+        df.to_excel(output_filename, index=False, header=False)
+
+        with open(output_filename, "rb") as f:
+            st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
+
