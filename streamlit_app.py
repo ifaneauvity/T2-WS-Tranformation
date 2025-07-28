@@ -529,54 +529,61 @@ elif transformation_choice == "30010059 誠邦有限公司":
             st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
 
 elif transformation_choice == "30010315 圳程":
-    uploaded_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="zhengcheng_raw")
-    mapping_file = st.file_uploader("Upload Mapping File", type=["xlsx"], key="zhengcheng_mapping")
+    raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="zc_raw")
+    mapping_file = st.file_uploader("Upload Mapping File", type=["xlsx"], key="zc_mapping")
 
-    if uploaded_file and mapping_file:
-        df_raw = pd.read_excel(uploaded_file, header=None)
+    if raw_data_file and mapping_file:
+        import openpyxl
 
-        data = []
-        current_product_code = None
-        current_product_name = None
+        wb = openpyxl.load_workbook(raw_data_file, data_only=True)
+        ws = wb.active
 
-        # Extract date from cell A5 using the last ~ date
-        raw_date_cell = str(df_raw.iloc[4, 0])
-        match = re.findall(r'~\s*(\d{3}/\d{2}/\d{2})', raw_date_cell)
-        if match:
-            last_date = match[-1]
-            y, m, d = map(int, last_date.split('/'))
-            converted_date = f"{y + 1911}{m:02d}{d:02d}"
-        else:
-            converted_date = None
+        # Extract report date from B3
+        report_date_raw = str(ws["B3"].value).strip() if ws["B3"].value else ""
+        report_date = ""
+        if "~" in report_date_raw:
+            report_date = report_date_raw.split("~")[-1].strip().replace("/", "")
+            if len(report_date.split("/")) == 3:
+                y, m, d = report_date.split("/")
+                report_date = f"{int(y):04}{int(m):02}{int(d):02}"
 
-        for _, row in df_raw.iterrows():
-            col_a = str(row[0]).strip() if pd.notna(row[0]) else ""
-            col_b = str(row[1]).strip() if pd.notna(row[1]) else ""
-            col_c = str(row[2]).strip() if pd.notna(row[2]) else ""
-            col_d = row[3] if pd.notna(row[3]) else None
+        records = []
+        product_name = product_code = customer_name = customer_code = None
 
-            # Match product code and name
-            if "貨品編號" in col_a and "貨品名稱" in col_a:
-                match = re.search(r"貨品編號[:：]([A-Z0-9\-]+)\s+貨品名稱[:：](.+)", col_a)
-                if match:
-                    current_product_code = match.group(1).strip()
-                    current_product_name = match.group(2).strip()
-                continue
+        for i in range(ws.max_row):
+            b = str(ws.cell(row=i+1, column=2).value).strip() if ws.cell(row=i+1, column=2).value else ""
+            c = str(ws.cell(row=i+1, column=3).value).strip() if ws.cell(row=i+1, column=3).value else ""
+            e = ws.cell(row=i+1, column=5).value if ws.cell(row=i+1, column=5).value else None
 
-            if "小計" in col_a or "小計" in col_b:
-                continue
+            if "(" in b and ")" in b:
+                last_open = b.rfind("(")
+                last_close = b.rfind(")")
+                code = b[last_open + 1 : last_close]
+                name = b[:last_open].strip()
 
-            if col_a and col_b and isinstance(col_d, (int, float)):
-                data.append([
-                    col_a, col_b, converted_date,
-                    current_product_code, current_product_name,
-                    int(col_d)
-                ])
+                if i+2 < ws.max_row and str(ws.cell(row=i+2, column=2).value).strip() == "單據類別":
+                    customer_name = name
+                    customer_code = code
+                else:
+                    product_name = name
+                    product_code = code
 
-        df = pd.DataFrame(data, columns=[
-            "Customer Code", "Customer Name", "Date",
-            "Product Code", "Product Name", "Quantity"
-        ])
+            if b == "出貨單" and c and isinstance(e, (int, float)):
+                records.append({
+                    "Customer Code": customer_code,
+                    "Customer Name": customer_name,
+                    "Date": report_date,
+                    "Product Code": product_code,
+                    "Product Name": product_name,
+                    "Quantity": int(e),
+                    "Document Number": c
+                })
+
+        df_transformed = pd.DataFrame(records)
+        df_transformed.insert(0, "Column1", "INV")
+        df_transformed.insert(1, "Column2", "U")
+        df_transformed.insert(2, "Column3", "30010315")
+        df_transformed.insert(3, "Column4", "圳程有限公司")
 
         # Load mappings
         dfs_mapping = {
@@ -584,33 +591,45 @@ elif transformation_choice == "30010315 圳程":
             for sheet in pd.ExcelFile(mapping_file).sheet_names
         }
 
+        # Customer mapping
         df_customer = dfs_mapping["Customer Mapping"]
-        df_customer = df_customer[df_customer["ASI_CRM_Mapping_Cust_No__c"] == 30010315]
-        df_customer = df_customer[["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"]].drop_duplicates()
+        df_customer = df_customer[[
+            "ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"
+        ]].drop_duplicates(subset="ASI_CRM_Offtake_Customer_No__c")
 
-        df = df.merge(df_customer, left_on="Customer Code", right_on="ASI_CRM_Offtake_Customer_No__c", how="left")
-        df["Customer Code"] = df["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.replace(r"\.0$", "", regex=True)
-        df.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
+        df_transformed = df_transformed.merge(
+            df_customer,
+            left_on="Customer Code",
+            right_on="ASI_CRM_Offtake_Customer_No__c",
+            how="left"
+        )
 
+        df_transformed["Customer Code"] = df_transformed["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.replace(r"\.0$", "", regex=True)
+        df_transformed.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
+
+        # SKU mapping
         df_sku = dfs_mapping["SKU Mapping"]
-        df_sku = df_sku[["ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"]].drop_duplicates()
+        df_sku = df_sku[[
+            "ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"
+        ]].drop_duplicates(subset="ASI_CRM_Offtake_Product__c")
 
-        df = df.merge(df_sku, left_on="Product Code", right_on="ASI_CRM_Offtake_Product__c", how="left")
-        insert_index = df.columns.get_loc("Product Code")
-        df.insert(insert_index, "PRT Product Code", df["ASI_CRM_SKU_Code__c"].astype(str).str.strip())
-        df.drop(columns=["ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"], inplace=True)
+        df_transformed = df_transformed.merge(
+            df_sku,
+            left_on="Product Code",
+            right_on="ASI_CRM_Offtake_Product__c",
+            how="left"
+        )
 
-        df.insert(0, "Col_1", "INV")
-        df.insert(1, "Col_2", "U")
-        df.insert(2, "Col_3", "30010315")
-        df.insert(3, "Col_4", "圳程有限公司")
+        product_index = df_transformed.columns.get_loc("Product Code")
+        df_transformed.insert(product_index, "PRT Product Code", df_transformed["ASI_CRM_SKU_Code__c"].astype(str).str.strip())
+        df_transformed.drop(columns=["ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"], inplace=True)
+
+        # Reorder for consistency
+        column_order = ["Column1", "Column2", "Column3", "Column4", "Customer Code", "Customer Name", "Date", "PRT Product Code", "Product Code", "Product Name", "Quantity", "Document Number"]
+        df_transformed = df_transformed[column_order]
 
         st.write("✅ Processed Data Preview:")
-        st.dataframe(df)
+        st.dataframe(df_transformed)
 
-        output_filename = "30010315_transformation.xlsx"
-        df.to_excel(output_filename, index=False, header=False)
-
-        with open(output_filename, "rb") as f:
-            st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
+        output_filename = "30010315_transformation.xls
 
