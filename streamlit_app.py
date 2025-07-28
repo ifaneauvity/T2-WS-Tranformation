@@ -632,7 +632,7 @@ elif transformation_choice == "30010315 圳程":
         st.dataframe(df_transformed)
 
         output_filename = "30010315_transformation.xls"
-        df_final.to_excel(output_filename, index=False, header=False)
+        df_transformed.to_excel(output_filename, index=False, header=False)
 
         with open(output_filename, "rb") as f:
             st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
