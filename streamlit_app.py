@@ -631,7 +631,7 @@ elif transformation_choice == "30010315 圳程":
         st.write("✅ Processed Data Preview:")
         st.dataframe(df_transformed)
 
-        output_filename = "30010315_transformation.xls"
+        output_filename = "30010315_transformation.xlsx"
         df_transformed.to_excel(output_filename, index=False, header=False)
 
         with open(output_filename, "rb") as f:
