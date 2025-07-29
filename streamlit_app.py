@@ -7,7 +7,7 @@ st.title("📊 WS Transformation")
 st.write("Upload an Excel file and choose the transformation format.")
 
 # Select transformation format
-transformation_choice = st.radio("Select Transformation Format:", ["30010085 宏酒樽 (夜)", "30010203 宏酒樽 (日)", "30010061 向日葵", "30010010 酒倉盛豐行", "30010013 酒田", "30010059 誠邦有限公司", "30010315 圳程"])
+transformation_choice = st.radio("Select Transformation Format:", ["30010085 宏酒樽 (夜)", "30010203 宏酒樽 (日)", "30010061 向日葵", "30010010 酒倉盛豐行", "30010013 酒田", "30010059 誠邦有限公司", "30010315 圳程", "30030088 九久"])
 
 if transformation_choice == "30010085 宏酒樽 (夜)":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="new_raw")
@@ -636,4 +636,133 @@ elif transformation_choice == "30010315 圳程":
 
         with open(output_filename, "rb") as f:
             st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
+            
+elif transformation_choice == "30030088 九久":
+    raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="jj_raw")
+    mapping_file = st.file_uploader("Upload Mapping File", type=["xlsx"], key="jj_mapping")
+
+    if raw_data_file and mapping_file:
+        import openpyxl
+
+        df_raw = pd.read_excel(raw_data_file, sheet_name=0, header=None)
+        extracted_data = []
+
+        i = 0
+        while i < len(df_raw):
+            row = df_raw.iloc[i, 0]
+
+            if isinstance(row, str) and row.startswith("貨品編號:"):
+                product_code = row.replace("貨品編號:", "").split()[0].strip()
+                product_name = row.replace("貨品編號:", "").split(maxsplit=1)[1].strip() if len(row.split()) > 1 else ""
+
+                data_start = i + 5
+                while data_start < len(df_raw):
+                    entry = df_raw.iloc[data_start]
+
+                    if isinstance(entry[0], str) and entry[0].startswith("貨品編號:"):
+                        break
+
+                    if pd.isna(entry[0]) or pd.isna(entry[1]) or pd.isna(entry[2]):
+                        data_start += 1
+                        continue
+
+                    try:
+                        report_date = entry[0]
+                        document_number = entry[1]
+                        customer_code = entry[2]
+                        customer_name = entry[3]
+                        quantity = entry[6]
+
+                        if pd.notna(quantity) and isinstance(quantity, (int, float)):
+                            extracted_data.append({
+                                "Customer Code": str(customer_code).strip(),
+                                "Customer Name": str(customer_name).strip(),
+                                "Date": report_date,
+                                "Product Code": product_code,
+                                "Product Name": product_name,
+                                "Quantity": int(quantity),
+                                "Document Number": document_number
+                            })
+                    except Exception:
+                        pass
+
+                    data_start += 1
+            i += 1
+
+        df_transformed = pd.DataFrame(extracted_data)
+
+        # Convert Minguo date to Gregorian YYYYMMDD
+        def convert_minguo_date(minguo_str):
+            try:
+                parts = str(minguo_str).split('/')
+                if len(parts) != 3:
+                    return None
+                year = int(parts[0]) + 1911
+                month = int(parts[1])
+                day = int(parts[2])
+                return f"{year:04d}{month:02d}{day:02d}"
+            except Exception:
+                return None
+
+        df_transformed["Date"] = df_transformed["Date"].apply(convert_minguo_date)
+
+        # Add fixed columns
+        df_transformed.insert(0, "Column4", "九久")
+        df_transformed.insert(0, "Column3", "30030088")
+        df_transformed.insert(0, "Column2", "U")
+        df_transformed.insert(0, "Column1", "INV")
+
+        # Load mapping sheets
+        dfs_mapping = {
+            sheet: pd.read_excel(mapping_file, sheet_name=sheet)
+            for sheet in pd.ExcelFile(mapping_file).sheet_names
+        }
+
+        # Customer mapping
+        df_customer = dfs_mapping["Customer Mapping"]
+        df_customer = df_customer[[
+            "ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"
+        ]].drop_duplicates(subset="ASI_CRM_Offtake_Customer_No__c")
+
+        df_transformed = df_transformed.merge(
+            df_customer,
+            left_on="Customer Code",
+            right_on="ASI_CRM_Offtake_Customer_No__c",
+            how="left"
+        )
+
+        df_transformed["Customer Code"] = df_transformed["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.replace(r"\\.0$", "", regex=True)
+        df_transformed.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
+
+        # SKU mapping
+        df_sku = dfs_mapping["SKU Mapping"]
+        df_sku = df_sku[[
+            "ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"
+        ]].drop_duplicates(subset="ASI_CRM_Offtake_Product__c")
+
+        df_transformed = df_transformed.merge(
+            df_sku,
+            left_on="Product Code",
+            right_on="ASI_CRM_Offtake_Product__c",
+            how="left"
+        )
+
+        product_index = df_transformed.columns.get_loc("Product Code")
+        df_transformed.insert(product_index, "PRT Product Code", df_transformed["ASI_CRM_SKU_Code__c"].astype(str).str.strip())
+        df_transformed.drop(columns=["ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"], inplace=True)
+
+        # Final column order
+        column_order = ["Column1", "Column2", "Column3", "Column4", "Customer Code", "Customer Name", "Date", "PRT Product Code", "Product Code", "Product Name", "Quantity", "Document Number"]
+        df_transformed = df_transformed[column_order]
+
+        st.write("✅ Processed Data Preview:")
+        st.dataframe(df_transformed)
+
+        output_filename = "30030088_transformation.xlsx"
+        df_transformed.to_excel(output_filename, index=False, header=False)
+
+        with open(output_filename, "rb") as f:
+            st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
+
+
 
