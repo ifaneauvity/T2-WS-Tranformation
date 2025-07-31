@@ -241,8 +241,7 @@ elif transformation_choice == "30010010 酒倉盛豐行":
     mapping_file = st.file_uploader("Upload Mapping File", type=["xlsx"], key="sakakura_mapping")
 
     if raw_data_file and mapping_file:
-        raw_df = pd.read_excel(raw_data_file, sheet_name="給廠商", header=None)
-
+        raw_df = pd.read_excel(raw_data_file, sheet_name=0, header=None)
         # Extract date from cell A5
         date_string = str(raw_df.iloc[4, 0])
         match = re.search(r'至\s*(\d{3}/\d{2}/\d{2})', date_string)
