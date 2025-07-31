@@ -877,3 +877,130 @@ elif transformation_choice == "30020145 鏵錡":
         with open(output_filename, "rb") as f:
             st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
 
+elif transformation_choice == "30010199 振泰 OFF":
+    raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xls"], key="zhen_tai_raw")
+    mapping_file = st.file_uploader("Upload Mapping File", type=["xlsx"], key="zhen_tai_mapping")
+
+    if raw_data_file is not None and mapping_file is not None:
+        def extract_from_date_sheets(file):
+            xls = pd.ExcelFile(file)
+            all_data = []
+            sheet_dates = {}
+
+            for sheet_name in xls.sheet_names:
+                df = pd.read_excel(file, sheet_name=sheet_name, header=None)
+                product_code = None
+                product_name = None
+
+                # Extract date from A5
+                raw_date_cell = str(df.iloc[4, 0])
+                if "至" in raw_date_cell:
+                    raw_date = raw_date_cell.split("至")[1].strip()
+                    try:
+                        parts = raw_date.split("/")
+                        year = int(parts[0]) + 1911
+                        month = int(parts[1])
+                        day = int(parts[2])
+                        formatted_date = f"{year:04d}{month:02d}{day:02d}"
+                    except:
+                        formatted_date = None
+                else:
+                    formatted_date = None
+                sheet_dates[sheet_name] = formatted_date
+
+                for i in range(len(df)):
+                    cell_value = str(df.iloc[i, 0]).strip()
+                    if cell_value.startswith("貨品編號:"):
+                        rest = cell_value.replace("貨品編號:", "", 1).strip()
+                        parts = rest.split("貨品名稱:")
+                        product_code = parts[0].strip()
+                        product_name = parts[1].strip() if len(parts) > 1 else ""
+                        continue
+                    if "小計" in cell_value or product_code is None:
+                        continue
+
+                    customer_code = str(df.iloc[i, 0]).strip()
+                    customer_name = str(df.iloc[i, 1]).strip() if pd.notna(df.iloc[i, 1]) else ""
+                    quantity = df.iloc[i, 2] if pd.notna(df.iloc[i, 2]) else None
+
+                    if customer_code and quantity and isinstance(quantity, (int, float)):
+                        all_data.append({
+                            "Sheet": sheet_name,
+                            "Customer Code": customer_code,
+                            "Customer Name": customer_name,
+                            "Date": formatted_date,
+                            "Product Code": product_code,
+                            "Product Name": product_name,
+                            "Quantity": quantity
+                        })
+
+            return pd.DataFrame(all_data)
+
+        df = extract_from_date_sheets(raw_data_file)
+
+        # Mapping setup
+        dfs_mapping = {
+            sheet: pd.read_excel(mapping_file, sheet_name=sheet)
+            for sheet in pd.ExcelFile(mapping_file).sheet_names
+        }
+
+        # Filter customer mapping
+        df_customer_mapping = dfs_mapping["Customer Mapping"]
+        df_customer_mapping = df_customer_mapping[
+            df_customer_mapping["ASI_CRM_Mapping_Cust_No__c"] == 30010199
+        ][["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"]].drop_duplicates()
+
+        df = df.merge(
+            df_customer_mapping,
+            left_on="Customer Code",
+            right_on="ASI_CRM_Offtake_Customer_No__c",
+            how="left"
+        )
+
+        df["Customer Code"] = df["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.replace(r"\.0$", "", regex=True)
+        df.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
+
+        df_sku_mapping = dfs_mapping["SKU Mapping"]
+        df_sku_mapping = df_sku_mapping[[
+            "ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"
+        ]].drop_duplicates()
+
+        df = df.merge(
+            df_sku_mapping,
+            left_on="Product Code",
+            right_on="ASI_CRM_Offtake_Product__c",
+            how="left"
+        )
+        df.insert(df.columns.get_loc("Product Code"), "PRT Product Code", df["ASI_CRM_SKU_Code__c"].astype(str).str.strip())
+        df.drop(columns=["ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"], inplace=True)
+
+        # Add 4 fixed columns
+        df.insert(1, "Col1", "INV")
+        df.insert(2, "Col2", "U")
+        df.insert(3, "Col3", "30010199")
+        df.insert(4, "Col4", "振泰 OFF")
+
+        # Optional: Toggle by Month (📅 grouped by available months)
+        available_months = sorted(set([d[:6] for d in df["Date"].dropna().astype(str)]))
+        month_filter = st.radio("📅 Filter by Month:", ["All"] + available_months)
+
+        if month_filter != "All":
+            df = df[df["Date"].astype(str).str.startswith(month_filter)]
+
+        # Final column order
+        df = df[[
+            "Sheet", "Col1", "Col2", "Col3", "Col4",
+            "Customer Code", "Customer Name", "Date",
+            "PRT Product Code", "Product Code", "Product Name", "Quantity"
+        ]]
+
+        st.write("✅ Processed Data Preview:")
+        st.dataframe(df)
+
+        st.download_button(
+            label="📥 Download Processed File",
+            data=df.to_csv(index=False),
+            file_name="zhen_tai_processed.csv",
+            mime="text/csv"
+        )
+
