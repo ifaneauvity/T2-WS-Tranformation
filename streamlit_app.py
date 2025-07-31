@@ -7,7 +7,7 @@ st.title("📊 WS Transformation")
 st.write("Upload an Excel file and choose the transformation format.")
 
 # Select transformation format
-transformation_choice = st.radio("Select Transformation Format:", ["30010085 宏酒樽 (夜)", "30010203 宏酒樽 (日)", "30010061 向日葵", "30010010 酒倉盛豐行", "30010013 酒田", "30010059 誠邦有限公司", "30010315 圳程", "30030088 九久"])
+transformation_choice = st.radio("Select Transformation Format:", ["30010085 宏酒樽 (夜)", "30010203 宏酒樽 (日)", "30010061 向日葵", "30010010 酒倉盛豐行", "30010013 酒田", "30010059 誠邦有限公司", "30010315 圳程", "30030088 九久", "30020145 鏵錡"])
 
 if transformation_choice == "30010085 宏酒樽 (夜)":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="new_raw")
@@ -764,4 +764,116 @@ elif transformation_choice == "30030088 九久":
             st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
 
 
+elif transformation_choice == "30020145 鏵錡":
+    raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="30020145_raw")
+    mapping_file = st.file_uploader("Upload Mapping File", type=["xlsx"], key="30020145_mapping")
+
+    if raw_data_file and mapping_file:
+        import pandas as pd
+        import re
+
+        def extract_product_data_from_workbook(file):
+            xls = pd.ExcelFile(file)
+            combined_data = []
+
+            for sheet_name in xls.sheet_names:
+                df = pd.read_excel(file, sheet_name=sheet_name, header=None)
+
+                merged_cell_value = str(df.iloc[2, 0])
+                product_match = re.search(r"貨品編號[:：]([A-Z0-9\-]+)\s+(.*)", merged_cell_value)
+
+                if not product_match:
+                    continue
+
+                product_code = product_match.group(1).strip()
+                product_name = product_match.group(2).strip()
+
+                df_data = df.iloc[8:, :8].copy()
+                df_data.columns = ["Date", "Document No", "Customer Code", "Distributor", "Customer Name", "Quantity", "Unit", "Note"]
+
+                for _, row in df_data.iterrows():
+                    if pd.isna(row["Date"]) or pd.isna(row["Customer Code"]) or pd.isna(row["Quantity"]):
+                        continue
+
+                    combined_data.append({
+                        "Customer Code": row["Customer Code"],
+                        "Customer Name": row["Customer Name"],
+                        "Date": row["Date"],
+                        "Product Code": product_code,
+                        "Product Name": product_name,
+                        "Quantity": row["Quantity"],
+                        "Document No": row["Document No"]
+                    })
+
+            return pd.DataFrame(combined_data)
+
+        def convert_minguo_to_gregorian(date_str):
+            try:
+                parts = str(date_str).split("/")
+                if len(parts) != 3:
+                    return None
+                year = int(parts[0]) + 1911
+                month = int(parts[1])
+                day = int(parts[2])
+                return f"{year:04d}{month:02d}{day:02d}"
+            except:
+                return None
+
+        df_combined = extract_product_data_from_workbook(raw_data_file)
+        df_combined["Date"] = df_combined["Date"].apply(convert_minguo_to_gregorian)
+
+        # Load mapping sheets
+        dfs_mapping = {
+            sheet: pd.read_excel(mapping_file, sheet_name=sheet)
+            for sheet in pd.ExcelFile(mapping_file).sheet_names
+        }
+
+        # Customer Mapping
+        df_customer = dfs_mapping["Customer Mapping"]
+        df_customer = df_customer[[
+            "ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"
+        ]].drop_duplicates(subset="ASI_CRM_Offtake_Customer_No__c")
+
+        df_combined = df_combined.merge(
+            df_customer,
+            left_on="Customer Code",
+            right_on="ASI_CRM_Offtake_Customer_No__c",
+            how="left"
+        )
+
+        df_combined["Customer Code"] = df_combined["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.replace(r"\.0$", "", regex=True)
+        df_combined.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
+
+        # SKU Mapping
+        df_sku = dfs_mapping["SKU Mapping"]
+        df_sku = df_sku[[
+            "ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"
+        ]].drop_duplicates(subset="ASI_CRM_Offtake_Product__c")
+
+        df_combined = df_combined.merge(
+            df_sku,
+            left_on="Product Code",
+            right_on="ASI_CRM_Offtake_Product__c",
+            how="left"
+        )
+
+        product_index = df_combined.columns.get_loc("Product Code")
+        df_combined.insert(product_index, "PRT Product Code", df_combined["ASI_CRM_SKU_Code__c"].astype(str).str.strip())
+        df_combined.drop(columns=["ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"], inplace=True)
+
+        # Insert fixed columns
+        df_combined.insert(0, "Column4", "任我行")
+        df_combined.insert(0, "Column3", "30020145")
+        df_combined.insert(0, "Column2", "U")
+        df_combined.insert(0, "Column1", "INV")
+
+        # Preview result
+        st.write("✅ Processed Data Preview:")
+        st.dataframe(df_combined)
+
+        output_filename = "30020145_transformation.xlsx"
+        df_combined.to_excel(output_filename, index=False, header=False)
+
+        with open(output_filename, "rb") as f:
+            st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
 
