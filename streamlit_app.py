@@ -279,14 +279,6 @@ elif transformation_choice == "30010010 酒倉盛豐行":
                     int(col_d)
                 ])
 
-      
-            if col_a.isdigit() and col_b and isinstance(col_d, (int, float)):
-                data.append([
-                    col_a, col_b, final_date,
-                    current_product_code, current_product_name,
-                    int(col_d)
-                ])
-
         df_cleaned = pd.DataFrame(data, columns=[
             "Customer Code", "Customer Name", "Date",
             "Product Code", "Product Name", "Quantity"
