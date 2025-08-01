@@ -365,7 +365,7 @@ elif transformation_choice == "30010013 酒田":
             if "小計" in col_a or "小計" in col_b:
                 continue
 
-            if col_a and col_a.startswith(("D", "C", "E", "M", "P")):
+            if re.match(r'^[A-Z]', col_a):  # Allow any valid Latin-starting code
                 if col_f and isinstance(col_f, (int, float)):
                     data.append([
                         col_a, col_b, final_date,
