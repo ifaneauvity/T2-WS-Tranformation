@@ -683,7 +683,7 @@ elif transformation_choice == "30030088 九久":
         df_raw = pd.read_excel(raw_data_file, sheet_name=0, header=None)
         extracted_data = []
 
-                i = 0
+        i = 0
         while i < len(df_raw):
             row = df_raw.iloc[i, 0]
 
