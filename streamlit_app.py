@@ -272,6 +272,19 @@ elif transformation_choice == "30010010 酒倉盛豐行":
             if "小計" in col_a or "小計" in col_b:
                 continue
 
+            # Safer checks
+            try:
+                cust_code = str(int(float(col_a)))
+                qty = int(float(col_d))
+                if current_product_code:  # skip if product not yet detected
+                    data.append([
+                        cust_code, col_b, final_date,
+                        current_product_code, current_product_name,
+                        qty
+                    ])
+            except:
+                continue
+
             if col_a.isdigit() and col_b and isinstance(col_d, (int, float)):
                 data.append([
                     col_a, col_b, final_date,
