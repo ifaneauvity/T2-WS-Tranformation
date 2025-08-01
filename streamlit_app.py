@@ -929,8 +929,13 @@ elif transformation_choice == "30010199 振泰 OFF":
                 product_code = None
                 product_name = None
 
+                # ✅ Skip sheet if A5 is missing
+                if df.shape[0] <= 4 or pd.isna(df.iloc[4, 0]):
+                    continue
+
                 # Extract date from A5
                 raw_date_cell = str(df.iloc[4, 0])
+
                 if "至" in raw_date_cell:
                     raw_date = raw_date_cell.split("至")[1].strip()
                     try:
