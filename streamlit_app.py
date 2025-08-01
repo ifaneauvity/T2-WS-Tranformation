@@ -121,7 +121,11 @@ elif transformation_choice == "30010203 宏酒樽 (日)":
             # Map product codes
             df_sku_mapping = dfs_mapping["SKU Mapping"]
             df_sku_mapping = df_sku_mapping[["ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"]].drop_duplicates(subset="ASI_CRM_Offtake_Product__c")
-            
+
+            # Clean and normalize SKU columns
+            df_transformed["Product Code"] = df_transformed["Product Code"].astype(str).str.strip().str.upper()
+            df_sku_mapping["ASI_CRM_Offtake_Product__c"] = df_sku_mapping["ASI_CRM_Offtake_Product__c"].astype(str).str.strip().str.upper()
+
             df_transformed = df_transformed.merge(
                 df_sku_mapping,
                 left_on="Product Code",
