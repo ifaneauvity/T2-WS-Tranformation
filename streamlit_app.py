@@ -197,28 +197,25 @@ elif transformation_choice == "30010061 向日葵":
         # Start processing from row 8 (index 7)
         for i in range(7, len(df)):
             row = df.iloc[i]
-            
-            # Check if the row contains a customer name (by looking for "客戶名稱")
+
             if isinstance(row[0], str) and '客戶名稱' in row[0]:
                 cleaned_text = re.sub(r'[\u200b\ufeff]', '', row[0]).strip()
-                
                 match = re.search(r'客戶編號[:：]\s*([\d\-]+).*客戶名稱[:：]\s*(.*)', cleaned_text)
                 if match:
                     current_customer_code = match.group(1).strip()
                     current_customer = match.group(2).strip()
-            
-            # Check if the row contains a date
+
             if isinstance(row[0], str) and re.match(r'\d{3}/\d{2}/\d{2}', row[0]):
                 year, month, day = map(int, row[0].split('/'))
                 current_date = f'{year + 1911}{month:02}{day:02}'
-            
+
             if pd.notna(row[1]):
                 product_code = row[1]
                 product_name = row[2]
                 quantity = row[3]
-                
+
                 data.append([current_customer_code, current_customer, current_date, product_code, product_name, quantity])
-        
+
         result_df = pd.DataFrame(data, columns=['Customer Code', 'Customer Name', 'Date', 'Product Code', 'Product Name', 'Quantity'])
 
         # Add fixed columns
@@ -226,6 +223,44 @@ elif transformation_choice == "30010061 向日葵":
         result_df.insert(1, 'Column2', 'U')
         result_df.insert(2, 'Column3', '30010061')
         result_df.insert(3, 'Column4', '向日葵')
+
+        # --- ✅ CUSTOMER MAPPING ---
+        dfs_mapping = {
+            sheet: pd.read_excel(mapping_file, sheet_name=sheet)
+            for sheet in pd.ExcelFile(mapping_file).sheet_names
+        }
+
+        df_customer = dfs_mapping["Customer Mapping"]
+        df_customer = df_customer[[
+            "ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"
+        ]].drop_duplicates(subset="ASI_CRM_Offtake_Customer_No__c")
+
+        result_df = result_df.merge(
+            df_customer,
+            left_on="Customer Code",
+            right_on="ASI_CRM_Offtake_Customer_No__c",
+            how="left"
+        )
+
+        result_df["Customer Code"] = result_df["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+        result_df.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
+
+        # --- ✅ SKU MAPPING ---
+        df_sku = dfs_mapping["SKU Mapping"]
+        df_sku = df_sku[[
+            "ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"
+        ]].drop_duplicates(subset="ASI_CRM_Offtake_Product__c")
+
+        result_df = result_df.merge(
+            df_sku,
+            left_on="Product Code",
+            right_on="ASI_CRM_Offtake_Product__c",
+            how="left"
+        )
+
+        product_index = result_df.columns.get_loc("Product Code")
+        result_df.insert(product_index, "PRT Product Code", result_df["ASI_CRM_SKU_Code__c"].astype(str).str.strip())
+        result_df.drop(columns=["ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"], inplace=True)
 
         # Preview data in Streamlit
         st.write("✅ Processed Data Preview:")
