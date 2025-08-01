@@ -227,9 +227,6 @@ elif transformation_choice == "30010061 向日葵":
         result_df.insert(2, 'Column3', '30010061')
         result_df.insert(3, 'Column4', '向日葵')
 
-        # ✅ Remove exact duplicates
-        result_df.drop_duplicates(keep='first', inplace=True)
-
         # Preview data in Streamlit
         st.write("✅ Processed Data Preview:")
         st.dataframe(result_df)
