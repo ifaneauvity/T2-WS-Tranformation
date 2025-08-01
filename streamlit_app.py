@@ -542,10 +542,11 @@ elif transformation_choice == "30010315 圳程":
         report_date_raw = str(ws["B3"].value).strip() if ws["B3"].value else ""
         report_date = ""
         if "~" in report_date_raw:
-            report_date = report_date_raw.split("~")[-1].strip().replace("/", "")
-            if len(report_date.split("/")) == 3:
-                y, m, d = report_date.split("/")
+            right_date = report_date_raw.split("~")[-1].strip()
+            if len(right_date.split("/")) == 3:
+                y, m, d = right_date.split("/")
                 report_date = f"{int(y):04}{int(m):02}{int(d):02}"
+
 
         records = []
         product_name = product_code = customer_name = customer_code = None
