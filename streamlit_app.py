@@ -683,7 +683,7 @@ elif transformation_choice == "30030088 九久":
         df_raw = pd.read_excel(raw_data_file, sheet_name=0, header=None)
         extracted_data = []
 
-        i = 0
+                i = 0
         while i < len(df_raw):
             row = df_raw.iloc[i, 0]
 
@@ -698,6 +698,11 @@ elif transformation_choice == "30030088 九久":
                     if isinstance(entry[0], str) and entry[0].startswith("貨品編號:"):
                         break
 
+                    # ✅ Skip if inbound: check if column E is '進貨單'
+                    if str(entry[4]).strip() == "進貨單":
+                        data_start += 1
+                        continue
+
                     if pd.isna(entry[0]) or pd.isna(entry[1]) or pd.isna(entry[2]):
                         data_start += 1
                         continue
@@ -711,7 +716,7 @@ elif transformation_choice == "30030088 九久":
 
                         if pd.notna(quantity) and isinstance(quantity, (int, float)):
                             extracted_data.append({
-                                "Customer Code": str(customer_code).strip(),
+                                "Customer Code": str(customer_code).strip().split(".")[0],  # ✅ Strip .0 if present
                                 "Customer Name": str(customer_name).strip(),
                                 "Date": report_date,
                                 "Product Code": product_code,
@@ -724,6 +729,7 @@ elif transformation_choice == "30030088 九久":
 
                     data_start += 1
             i += 1
+
 
         df_transformed = pd.DataFrame(extracted_data)
 
