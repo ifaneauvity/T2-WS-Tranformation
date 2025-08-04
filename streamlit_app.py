@@ -468,16 +468,26 @@ elif transformation_choice == "30010059 誠邦有限公司":
     if raw_data_file is not None and mapping_file is not None:
         raw_df = pd.read_excel(raw_data_file, sheet_name=0, header=None)
 
+        # Detect column offset by checking for '貨單編號' in column B
+        offset = 0
+        for _, row in raw_df.iterrows():
+            if str(row[1]).strip() == "貨單編號":
+                offset = 0
+                break
+            elif str(row[1]).strip() == "日期":  # fallback: if everything shifted left
+                offset = 1
+                break
+
         data = []
         current_product_code = None
         current_product_name = None
 
         for _, row in raw_df.iterrows():
             col_a = str(row[0]).strip() if pd.notna(row[0]) else ""
-            col_b = str(row[1]).strip() if pd.notna(row[1]) else ""
-            col_c = str(row[2]).strip() if pd.notna(row[2]) else ""
-            col_d = str(row[3]).strip() if pd.notna(row[3]) else ""
-            col_e = row[4] if pd.notna(row[4]) else None
+            col_b = str(row[1 - offset]).strip() if pd.notna(row[1 - offset]) else ""
+            col_c = str(row[2 - offset]).strip() if pd.notna(row[2 - offset]) else ""
+            col_d = str(row[3 - offset]).strip() if pd.notna(row[3 - offset]) else ""
+            col_e = row[4 - offset] if pd.notna(row[4 - offset]) else None
 
             # Clean invisible characters in col_a
             col_a_clean = col_a.replace('\u3000', ' ').replace('\xa0', ' ').strip()
@@ -527,7 +537,7 @@ elif transformation_choice == "30010059 誠邦有限公司":
             right_on="ASI_CRM_Offtake_Customer_No__c",
             how="left"
         )
-        df_cleaned["Customer Code"] = df_cleaned["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.replace(r"\.0$", "", regex=True)
+        df_cleaned["Customer Code"] = df_cleaned["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.replace(r"\\.0$", "", regex=True)
         df_cleaned.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
 
         df_sku_mapping = dfs_mapping["SKU Mapping"]
@@ -562,7 +572,6 @@ elif transformation_choice == "30010059 誠邦有限公司":
 
         with open(output_filename, "rb") as f:
             st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
-
 
 
 elif transformation_choice == "30010315 圳程":
