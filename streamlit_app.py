@@ -7,7 +7,7 @@ st.title("📊 WS Transformation")
 st.write("Upload an Excel file and choose the transformation format.")
 
 # Select transformation format
-transformation_choice = st.radio("Select Transformation Format:", ["30010085 宏酒樽 (夜)", "30010203 宏酒樽 (日)", "30010061 向日葵", "30010010 酒倉盛豐行", "30010013 酒田", "30010059 誠邦有限公司", "30010315 圳程", "30030088 九久", "30020145 鏵錡", "30010199 振泰 OFF", "30010176 振泰 ON", "30030094 和易 ON"])
+transformation_choice = st.selectbox("Select Transformation Format:", ["30010085 宏酒樽 (夜)", "30010203 宏酒樽 (日)", "30010061 向日葵", "30010010 酒倉盛豐行", "30010013 酒田", "30010059 誠邦有限公司", "30010315 圳程", "30030088 九久", "30020145 鏵錡", "30010199 振泰 OFF", "30010176 振泰 ON", "30030094 和易 ON", "33001422 和易 OFF"])
 
 if transformation_choice == "30010085 宏酒樽 (夜)":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="new_raw")
@@ -1289,3 +1289,103 @@ elif transformation_choice == "30030094 和易 ON":
         with open(output_filename, "rb") as f:
             st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
 
+elif transformation_choice == "33001422 和易 OFF":
+    raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xls", "xlsx"], key="heyi_off_raw")
+    mapping_file = st.file_uploader("Upload Mapping File", type=["xls", "xlsx"], key="heyi_off_mapping")
+
+    if raw_data_file and mapping_file:
+        raw_df = pd.read_excel(raw_data_file, sheet_name="Page 1", header=None)
+
+        extracted_data = []
+        product_code = None
+        product_name = None
+
+        for _, row in raw_df.iterrows():
+            col0 = str(row[0]) if pd.notna(row[0]) else ""
+            col3 = str(row[3]) if pd.notna(row[3]) else ""
+
+            if col0.startswith("產品編號:"):
+                product_code = col0.replace("產品編號:", "").strip()
+
+            if col3.startswith("品名規格:"):
+                product_name = col3.replace("品名規格:", "").strip()
+
+            if str(row[3]).strip() == "銷貨（庫存）":
+                report_date = row[0]
+                document_number = row[1]
+                customer_name = row[2]
+                quantity = row[5]
+                customer_code = row[9]
+
+                if all(pd.notna([report_date, document_number, customer_name, quantity, customer_code])):
+                    extracted_data.append({
+                        "Customer Code": str(customer_code).strip(),
+                        "Customer Name": str(customer_name).strip(),
+                        "Date": report_date,
+                        "Product Code": product_code,
+                        "Product Name": product_name,
+                        "Quantity": int(quantity),
+                        "Document Number": document_number
+                    })
+
+        df_extracted = pd.DataFrame(extracted_data)
+
+        # Add 4 fixed metadata columns
+        df_extracted.insert(0, "INV", "INV")
+        df_extracted.insert(1, "U", "U")
+        df_extracted.insert(2, "Customer Group Code", "33001422")
+        df_extracted.insert(3, "Customer Group Name", "和易 OFF")
+
+        # Convert Minguo date to Gregorian
+        def convert_minguo_date(date_str):
+            try:
+                if isinstance(date_str, str) and '/' in date_str:
+                    year, month, day = map(int, date_str.split('/'))
+                    return f"{year + 1911:04d}{month:02d}{day:02d}"
+                return date_str
+            except:
+                return date_str
+
+        df_extracted["Date"] = df_extracted["Date"].apply(convert_minguo_date)
+
+        # Customer Mapping
+        mapping_customer = pd.read_excel(mapping_file, sheet_name="Customer Mapping")
+        mapping_customer = mapping_customer[[
+            "ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"
+        ]].drop_duplicates(subset="ASI_CRM_Offtake_Customer_No__c")
+
+        df_extracted = df_extracted.merge(
+            mapping_customer,
+            left_on="Customer Code",
+            right_on="ASI_CRM_Offtake_Customer_No__c",
+            how="left"
+        )
+
+        df_extracted["Customer Code"] = df_extracted["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.replace(r"\.0$", "", regex=True)
+        df_extracted.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
+
+        # SKU Mapping
+        mapping_sku = pd.read_excel(mapping_file, sheet_name="SKU Mapping")
+        mapping_sku = mapping_sku[[
+            "ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"
+        ]].drop_duplicates(subset="ASI_CRM_Offtake_Product__c")
+
+        df_extracted = df_extracted.merge(
+            mapping_sku,
+            left_on="Product Code",
+            right_on="ASI_CRM_Offtake_Product__c",
+            how="left"
+        )
+
+        product_index = df_extracted.columns.get_loc("Product Code")
+        df_extracted.insert(product_index, "PRT Product Code", df_extracted["ASI_CRM_SKU_Code__c"].astype(str).str.strip())
+        df_extracted.drop(columns=["ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"], inplace=True)
+
+        st.write("✅ Processed Data Preview:")
+        st.dataframe(df_extracted)
+
+        output_filename = "33001422_transformation.xlsx"
+        df_extracted.to_excel(output_filename, index=False, header=False)
+
+        with open(output_filename, "rb") as f:
+            st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
