@@ -480,12 +480,13 @@ elif transformation_choice == "30010059 誠邦有限公司":
                     offset = 0  # Format A
                 else:
                     offset = 1  # Format B
-                start_row = i  # Adjust start point
+                start_row = i
                 break
 
         data = []
         current_product_code = None
         current_product_name = None
+        collecting = False
 
         for i in range(start_row, len(raw_df)):
             row = raw_df.iloc[i]
@@ -503,6 +504,9 @@ elif transformation_choice == "30010059 誠邦有限公司":
                     current_product_code = match.group(1).strip()
                     current_product_name = match.group(2).strip()
                 continue
+
+            if current_product_code is None or current_product_name is None:
+                continue  # wait until we have product info
 
             if "合計" in col_a_clean or "小計" in col_a_clean:
                 continue
@@ -579,6 +583,7 @@ elif transformation_choice == "30010059 誠邦有限公司":
 
         with open(output_filename, "rb") as f:
             st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
+
 
 elif transformation_choice == "30010315 圳程":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="zc_raw")
