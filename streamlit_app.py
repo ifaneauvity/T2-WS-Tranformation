@@ -462,8 +462,8 @@ elif transformation_choice == "30010013 酒田":
             st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
 
 elif transformation_choice == "30010059 誠邦有限公司":
-    raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="raw_30010059")
-    mapping_file = st.file_uploader("Upload Mapping File", type=["xlsx"], key="mapping_30010059")
+    raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xls", "xlsx"], key="raw_30010059")
+    mapping_file = st.file_uploader("Upload Mapping File", type=["xls", "xlsx"], key="mapping_30010059")
 
     if raw_data_file is not None and mapping_file is not None:
         raw_df = pd.read_excel(raw_data_file, sheet_name=0, header=None)
@@ -479,7 +479,7 @@ elif transformation_choice == "30010059 誠邦有限公司":
             col_d = str(row[3]).strip() if pd.notna(row[3]) else ""
             col_e = row[4] if pd.notna(row[4]) else None
 
-            # Clean invisible characters in col_a
+            # Clean invisible characters
             col_a_clean = col_a.replace('\u3000', ' ').replace('\xa0', ' ').strip()
 
             if "貨品編號:" in col_a_clean:
@@ -492,29 +492,41 @@ elif transformation_choice == "30010059 誠邦有限公司":
             if "合計" in col_a_clean or "小計" in col_a_clean:
                 continue
 
-            if re.match(r"\d{4}/\d{2}/\d{2}", col_a_clean) and col_c and isinstance(col_e, (int, float)):
+            if re.match(r"\d{4}/\d{2}/\d{2}", col_a_clean) and isinstance(col_e, (int, float)):
                 try:
                     y, m, d = map(int, col_a_clean.split("/"))
                     gregorian_date = f"{y + 1911}{m:02d}{d:02d}"
                 except:
                     gregorian_date = col_a_clean
 
-                data.append([
-                    col_c, col_d, gregorian_date,
-                    current_product_code, current_product_name,
-                    int(col_e)
-                ])
+                # Format A: col_b = code, col_c = name
+                # Format B: col_c = code, col_d = name
+                if col_b and col_c:
+                    customer_code = col_b
+                    customer_name = col_c
+                else:
+                    customer_code = col_c
+                    customer_name = col_d
+
+                if customer_code:
+                    data.append([
+                        customer_code, customer_name, gregorian_date,
+                        current_product_code, current_product_name,
+                        int(col_e)
+                    ])
 
         df_cleaned = pd.DataFrame(data, columns=[
             "Customer Code", "Customer Name", "Date",
             "Product Code", "Product Name", "Quantity"
         ])
 
+        # Load mapping
         dfs_mapping = {
             sheet: pd.read_excel(mapping_file, sheet_name=sheet)
             for sheet in pd.ExcelFile(mapping_file).sheet_names
         }
 
+        # Customer Mapping
         df_customer_mapping = dfs_mapping["Customer Mapping"]
         df_customer_mapping = df_customer_mapping[[
             "ASI_CRM_Offtake_Customer_No__c",
@@ -530,6 +542,7 @@ elif transformation_choice == "30010059 誠邦有限公司":
         df_cleaned["Customer Code"] = df_cleaned["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.replace(r"\.0$", "", regex=True)
         df_cleaned.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
 
+        # SKU Mapping
         df_sku_mapping = dfs_mapping["SKU Mapping"]
         df_sku_mapping = df_sku_mapping[[
             "ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"
@@ -545,6 +558,7 @@ elif transformation_choice == "30010059 誠邦有限公司":
         df_cleaned.insert(product_index, "PRT Product Code", df_cleaned["ASI_CRM_SKU_Code__c"].astype(str).str.strip())
         df_cleaned.drop(columns=["ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"], inplace=True)
 
+        # Add static columns
         fixed_df = pd.DataFrame({
             "Column1": ["INV"] * len(df_cleaned),
             "Column2": ["U"] * len(df_cleaned),
@@ -562,6 +576,7 @@ elif transformation_choice == "30010059 誠邦有限公司":
 
         with open(output_filename, "rb") as f:
             st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
+
 
 elif transformation_choice == "30010315 圳程":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="zc_raw")
