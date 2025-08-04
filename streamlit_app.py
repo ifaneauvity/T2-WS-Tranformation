@@ -468,14 +468,17 @@ elif transformation_choice == "30010059 誠邦有限公司":
     if raw_data_file is not None and mapping_file is not None:
         raw_df = pd.read_excel(raw_data_file, sheet_name=0, header=None)
 
-        # Detect column offset by checking for '貨單編號' in column B
+        # Detect format by scanning column A for a date and inspecting column B content
         offset = 0
         for _, row in raw_df.iterrows():
-            if str(row[1]).strip() == "貨單編號":
-                offset = 0
-                break
-            elif str(row[1]).strip() == "日期":  # fallback: if everything shifted left
-                offset = 1
+            col_a = str(row[0]).strip() if pd.notna(row[0]) else ""
+            col_b = str(row[1]).strip() if pd.notna(row[1]) else ""
+
+            if re.match(r"\d{3}/\d{2}/\d{2}", col_a):
+                if col_b.startswith("銷"):
+                    offset = 0  # Format A: has extra column starting with "銷"
+                else:
+                    offset = 1  # Format B: everything shifted one column left
                 break
 
         data = []
@@ -489,7 +492,6 @@ elif transformation_choice == "30010059 誠邦有限公司":
             col_d = str(row[3 - offset]).strip() if pd.notna(row[3 - offset]) else ""
             col_e = row[4 - offset] if pd.notna(row[4 - offset]) else None
 
-            # Clean invisible characters in col_a
             col_a_clean = col_a.replace('\u3000', ' ').replace('\xa0', ' ').strip()
 
             if "貨品編號:" in col_a_clean:
@@ -502,7 +504,7 @@ elif transformation_choice == "30010059 誠邦有限公司":
             if "合計" in col_a_clean or "小計" in col_a_clean:
                 continue
 
-            if re.match(r"\d{4}/\d{2}/\d{2}", col_a_clean) and col_c and isinstance(col_e, (int, float)):
+            if re.match(r"\d{3}/\d{2}/\d{2}", col_a_clean) and col_c and isinstance(col_e, (int, float)):
                 try:
                     y, m, d = map(int, col_a_clean.split("/"))
                     gregorian_date = f"{y + 1911}{m:02d}{d:02d}"
