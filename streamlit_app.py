@@ -480,13 +480,12 @@ elif transformation_choice == "30010059 誠邦有限公司":
                     offset = 0  # Format A
                 else:
                     offset = 1  # Format B
-                start_row = i
+                start_row = i - 1  # Include product line before transactions
                 break
 
         data = []
         current_product_code = None
         current_product_name = None
-        collecting = False
 
         for i in range(start_row, len(raw_df)):
             row = raw_df.iloc[i]
@@ -499,11 +498,10 @@ elif transformation_choice == "30010059 誠邦有限公司":
             col_a_clean = col_a.replace('\u3000', ' ').replace('\xa0', ' ').strip()
 
             if "貨品編號:" in col_a_clean:
-                match = re.search(r"貨品編號:\s*\[([^\]]+)\]\s*(.+)", col_a_clean)
+                match = re.search(r"貨品編號:\s*\\[([^\\]]+)\\]\s*(.+)", col_a_clean)
                 if match:
                     current_product_code = match.group(1).strip()
                     current_product_name = match.group(2).strip()
-                continue
 
             if current_product_code is None or current_product_name is None:
                 continue  # wait until we have product info
