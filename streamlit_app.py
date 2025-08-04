@@ -741,9 +741,22 @@ elif transformation_choice == "30030088 九久":
                         data_start += 1
                         continue
 
+                    # Check if entry is valid (i.e., not empty)
                     if pd.isna(entry[0]) or pd.isna(entry[1]) or pd.isna(entry[2]):
                         data_start += 1
                         continue
+
+                    # Initialize return flag
+                    is_return = False
+
+                    # ✅ Skip if inbound: check if column E is '進貨單'
+                    # ✅ If it's a return '銷退單', we mark it and negate quantity later
+                    doc_type = str(entry[4]).strip()
+                    if doc_type == "進貨單":
+                        data_start += 1
+                        continue
+                    elif doc_type == "銷退單":
+                        is_return = True
 
                     try:
                         report_date = entry[0]
@@ -753,8 +766,10 @@ elif transformation_choice == "30030088 九久":
                         quantity = entry[6]
 
                         if pd.notna(quantity) and isinstance(quantity, (int, float)):
+                            if is_return:
+                                quantity = -abs(int(quantity))  # Ensure it's negative
                             extracted_data.append({
-                                "Customer Code": str(customer_code).strip().split(".")[0],  # ✅ Strip .0 if present
+                                "Customer Code": str(customer_code).strip().split(".")[0],
                                 "Customer Name": str(customer_name).strip(),
                                 "Date": report_date,
                                 "Product Code": product_code,
@@ -764,7 +779,6 @@ elif transformation_choice == "30030088 九久":
                             })
                     except Exception:
                         pass
-
                     data_start += 1
             i += 1
 
