@@ -1112,8 +1112,10 @@ elif transformation_choice == "30010199 振泰 OFF":
                 file_name=output_filename
             )
 
-
 elif transformation_choice == "30010176 振泰 ON":
+    import pandas as pd
+    import streamlit as st
+
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xls"], key="zhen_tai_raw")
     mapping_file = st.file_uploader("Upload Mapping File", type=["xlsx"], key="zhen_tai_mapping")
 
@@ -1188,7 +1190,7 @@ elif transformation_choice == "30010176 振泰 ON":
         # Filter customer mapping
         df_customer_mapping = dfs_mapping["Customer Mapping"]
         df_customer_mapping = df_customer_mapping[
-            df_customer_mapping["ASI_CRM_Mapping_Cust_No__c"] == 30010199
+            df_customer_mapping["ASI_CRM_Mapping_Cust_No__c"] == 30010176
         ][["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"]].drop_duplicates()
 
         df = df.merge(
@@ -1218,8 +1220,8 @@ elif transformation_choice == "30010176 振泰 ON":
         # Add 4 fixed columns
         df.insert(1, "Col1", "INV")
         df.insert(2, "Col2", "U")
-        df.insert(3, "Col3", "30010199")
-        df.insert(4, "Col4", "振泰 OFF")
+        df.insert(3, "Col3", "30010176")
+        df.insert(4, "Col4", "振泰 ON")
 
         # Optional: Toggle by Month (📅 grouped by available months)
         available_months = sorted(set([d[:6] for d in df["Date"].dropna().astype(str)]))
@@ -1228,9 +1230,9 @@ elif transformation_choice == "30010176 振泰 ON":
         if month_filter != "All":
             df = df[df["Date"].astype(str).str.startswith(month_filter)]
 
-        # Final column order
+        # Final column order without 'Sheet'
         df = df[[
-            "Sheet", "Col1", "Col2", "Col3", "Col4",
+            "Col1", "Col2", "Col3", "Col4",
             "Customer Code", "Customer Name", "Date",
             "PRT Product Code", "Product Code", "Product Name", "Quantity"
         ]]
@@ -1238,12 +1240,17 @@ elif transformation_choice == "30010176 振泰 ON":
         st.write("✅ Processed Data Preview:")
         st.dataframe(df)
 
-        st.download_button(
-            label="📥 Download Processed File",
-            data=df.to_csv(index=False),
-            file_name="zhen_tai_processed.csv",
-            mime="text/csv"
-        )
+        # Export to Excel (remove first row, no headers)
+        output_filename = "30010176_transformation.xlsx"
+        df_export = df.iloc[1:].copy()
+        df_export.to_excel(output_filename, index=False, header=False)
+
+        with open(output_filename, "rb") as f:
+            st.download_button(
+                label="📥 Download Processed File",
+                data=f,
+                file_name=output_filename
+            )
 
 elif transformation_choice == "30030094 和易 ON":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xls", "xlsx"], key="heyi_raw")
