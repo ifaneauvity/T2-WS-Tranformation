@@ -468,32 +468,37 @@ elif transformation_choice == "30010059 誠邦有限公司":
     if raw_data_file is not None and mapping_file is not None:
         raw_df = pd.read_excel(raw_data_file, sheet_name=0, header=None)
 
-        # Determine offset by inspecting first row with non-empty col_b
+        # Detect format by scanning rows starting at row 10
         offset = 0
-        for _, row in raw_df.iterrows():
+        start_row = 10
+        for i in range(start_row, len(raw_df)):
+            row = raw_df.iloc[i]
+            col_a = str(row[0]).strip() if pd.notna(row[0]) else ""
             col_b = str(row[1]).strip() if pd.notna(row[1]) else ""
-            if col_b.startswith("銷"):
-                offset = 0  # Format A
-            else:
-                offset = 1  # Format B
-            break
+            if re.match(r"\d{4}/\d{2}/\d{2}|\d{3}/\d{2}/\d{2}", col_a):
+                if col_b.startswith("銷"):
+                    offset = 0  # Format A
+                else:
+                    offset = 1  # Format B
+                start_row = i  # Adjust start point
+                break
 
         data = []
         current_product_code = None
         current_product_name = None
 
-        for _, row in raw_df.iterrows():
+        for i in range(start_row, len(raw_df)):
+            row = raw_df.iloc[i]
             col_a = str(row[0]).strip() if pd.notna(row[0]) else ""
             col_b = str(row[1 - offset]).strip() if pd.notna(row[1 - offset]) else ""
             col_c = str(row[2 - offset]).strip() if pd.notna(row[2 - offset]) else ""
             col_d = str(row[3 - offset]).strip() if pd.notna(row[3 - offset]) else ""
             col_e = row[4 - offset] if pd.notna(row[4 - offset]) else None
 
-            # Clean and identify product
             col_a_clean = col_a.replace('\u3000', ' ').replace('\xa0', ' ').strip()
 
             if "貨品編號:" in col_a_clean:
-                match = re.search(r"貨品編號:\s*\[([^\]]+)\]\s*(.+)", col_a_clean)
+                match = re.search(r"貨品編號:\s*\\[([^\\]]+)\\]\s*(.+)", col_a_clean)
                 if match:
                     current_product_code = match.group(1).strip()
                     current_product_name = match.group(2).strip()
@@ -505,7 +510,9 @@ elif transformation_choice == "30010059 誠邦有限公司":
             if col_c and isinstance(col_e, (int, float)):
                 try:
                     y, m, d = map(int, col_a_clean.split("/"))
-                    gregorian_date = f"{y + 1911}{m:02d}{d:02d}"
+                    if y < 1911:
+                        y += 1911
+                    gregorian_date = f"{y}{m:02d}{d:02d}"
                 except:
                     gregorian_date = col_a_clean
 
@@ -537,7 +544,7 @@ elif transformation_choice == "30010059 誠邦有限公司":
             right_on="ASI_CRM_Offtake_Customer_No__c",
             how="left"
         )
-        df_cleaned["Customer Code"] = df_cleaned["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.replace(r"\.0$", "", regex=True)
+        df_cleaned["Customer Code"] = df_cleaned["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.replace(r"\\.0$", "", regex=True)
         df_cleaned.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
 
         df_sku_mapping = dfs_mapping["SKU Mapping"]
@@ -572,7 +579,6 @@ elif transformation_choice == "30010059 誠邦有限公司":
 
         with open(output_filename, "rb") as f:
             st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
-
 
 elif transformation_choice == "30010315 圳程":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="zc_raw")
