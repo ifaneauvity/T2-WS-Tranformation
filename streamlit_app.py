@@ -460,7 +460,6 @@ elif transformation_choice == "30010013 酒田":
 
         with open(output_filename, "rb") as f:
             st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
-
 elif transformation_choice == "30010059 誠邦有限公司":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="raw_30010059")
     mapping_file = st.file_uploader("Upload Mapping File", type=["xlsx"], key="mapping_30010059")
@@ -468,18 +467,15 @@ elif transformation_choice == "30010059 誠邦有限公司":
     if raw_data_file is not None and mapping_file is not None:
         raw_df = pd.read_excel(raw_data_file, sheet_name=0, header=None)
 
-        # Detect format by scanning column A for a date and inspecting column B content
+        # Detect format by scanning column B content
         offset = 0
         for _, row in raw_df.iterrows():
-            col_a = str(row[0]).strip() if pd.notna(row[0]) else ""
             col_b = str(row[1]).strip() if pd.notna(row[1]) else ""
-
-            if re.match(r"\d{3}/\d{2}/\d{2}", col_a):
-                if col_b.startswith("銷"):
-                    offset = 0  # Format A: has extra column starting with "銷"
-                else:
-                    offset = 1  # Format B: everything shifted one column left
-                break
+            if col_b.startswith("銷"):
+                offset = 0  # Format A: has extra column starting with "銷"
+            else:
+                offset = 1  # Format B: everything shifted one column left
+            break
 
         data = []
         current_product_code = None
@@ -504,7 +500,7 @@ elif transformation_choice == "30010059 誠邦有限公司":
             if "合計" in col_a_clean or "小計" in col_a_clean:
                 continue
 
-            if re.match(r"\d{3}/\d{2}/\d{2}", col_a_clean) and col_c and isinstance(col_e, (int, float)):
+            if col_c and isinstance(col_e, (int, float)):
                 try:
                     y, m, d = map(int, col_a_clean.split("/"))
                     gregorian_date = f"{y + 1911}{m:02d}{d:02d}"
@@ -574,7 +570,6 @@ elif transformation_choice == "30010059 誠邦有限公司":
 
         with open(output_filename, "rb") as f:
             st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
-
 
 elif transformation_choice == "30010315 圳程":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="zc_raw")
