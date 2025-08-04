@@ -7,7 +7,7 @@ st.title("📊 WS Transformation")
 st.write("Upload an Excel file and choose the transformation format.")
 
 # Select transformation format
-transformation_choice = st.radio("Select Transformation Format:", ["30010085 宏酒樽 (夜)", "30010203 宏酒樽 (日)", "30010061 向日葵", "30010010 酒倉盛豐行", "30010013 酒田", "30010059 誠邦有限公司", "30010315 圳程", "30030088 九久", "30020145 鏵錡", "30010199 振泰 OFF", "30010176 振泰 ON"])
+transformation_choice = st.radio("Select Transformation Format:", ["30010085 宏酒樽 (夜)", "30010203 宏酒樽 (日)", "30010061 向日葵", "30010010 酒倉盛豐行", "30010013 酒田", "30010059 誠邦有限公司", "30010315 圳程", "30030088 九久", "30020145 鏵錡", "30010199 振泰 OFF", "30010176 振泰 ON", "30030094 和易 ON"])
 
 if transformation_choice == "30010085 宏酒樽 (夜)":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="new_raw")
@@ -1183,3 +1183,109 @@ elif transformation_choice == "30010176 振泰 ON":
             file_name="zhen_tai_processed.csv",
             mime="text/csv"
         )
+
+elif transformation_choice == "30030094 和易 ON":
+    raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="heyi_raw")
+    mapping_file = st.file_uploader("Upload Mapping File", type=["xlsx"], key="heyi_mapping")
+
+    if raw_data_file and mapping_file:
+        raw_df = pd.read_excel(raw_data_file, sheet_name="Page 1", header=None)
+
+        # Extract depletion rows with context
+        extracted_data = []
+        product_code = None
+        product_name = None
+
+        for idx, row in raw_df.iterrows():
+            col0 = str(row[0]) if pd.notna(row[0]) else ""
+            col3 = str(row[3]) if pd.notna(row[3]) else ""
+
+            if col0.startswith("產品編號:"):
+                product_code = col0.replace("產品編號:", "").strip()
+
+            if col3.startswith("品名規格:"):
+                product_name = col3.replace("品名規格:", "").strip()
+
+            if str(row[3]).strip() == "銷貨（庫存）":
+                report_date = row[0]
+                document_number = row[1]
+                customer_name = row[2]
+                quantity = row[5]
+                customer_code = row[9]
+
+                if all(pd.notna([report_date, document_number, customer_name, quantity, customer_code])):
+                    extracted_data.append({
+                        "Customer Code": str(customer_code).strip(),
+                        "Customer Name": str(customer_name).strip(),
+                        "Date": report_date,
+                        "Product Code": product_code,
+                        "Product Name": product_name,
+                        "Quantity": int(quantity),
+                        "Document Number": document_number
+                    })
+
+        depletion_df = pd.DataFrame(extracted_data)
+
+        # Add fixed columns
+        depletion_df.insert(0, "INV", "INV")
+        depletion_df.insert(1, "U", "U")
+        depletion_df.insert(2, "Customer Group Code", "30030094")
+        depletion_df.insert(3, "Customer Group Name", "和易 ON")
+
+        # Mapping: Customer
+        mapping_customer = pd.read_excel(mapping_file, sheet_name="Customer Mapping")
+        mapping_customer = mapping_customer[[
+            "ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"
+        ]].drop_duplicates(subset="ASI_CRM_Offtake_Customer_No__c")
+
+        depletion_df = depletion_df.merge(
+            mapping_customer,
+            left_on="Customer Code",
+            right_on="ASI_CRM_Offtake_Customer_No__c",
+            how="left"
+        )
+
+        depletion_df["Customer Code"] = depletion_df["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.replace(r"\\.0$", "", regex=True)
+        depletion_df.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
+
+        # Mapping: SKU
+        mapping_sku = pd.read_excel(mapping_file, sheet_name="SKU Mapping")
+        mapping_sku = mapping_sku[[
+            "ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"
+        ]].drop_duplicates(subset="ASI_CRM_Offtake_Product__c")
+
+        depletion_df = depletion_df.merge(
+            mapping_sku,
+            left_on="Product Code",
+            right_on="ASI_CRM_Offtake_Product__c",
+            how="left"
+        )
+
+        product_index = depletion_df.columns.get_loc("Product Code")
+        depletion_df.insert(product_index, "PRT Product Code", depletion_df["ASI_CRM_SKU_Code__c"].astype(str).str.strip())
+        depletion_df.drop(columns=["ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"], inplace=True)
+
+        # Convert Minguo date to YYYYMMDD
+        def convert_minguo_date(date_str):
+            try:
+                if isinstance(date_str, str) and '/' in date_str:
+                    parts = date_str.strip().split('/')
+                    year = int(parts[0]) + 1911
+                    month = int(parts[1])
+                    day = int(parts[2])
+                    return f"{year:04d}{month:02d}{day:02d}"
+                return date_str
+            except:
+                return date_str
+
+        depletion_df["Date"] = depletion_df["Date"].apply(convert_minguo_date)
+
+        st.write("✅ Processed Data Preview:")
+        st.dataframe(depletion_df)
+
+        output_filename = "30030094_transformation.xlsx"
+        depletion_df.to_excel(output_filename, index=False, header=False)
+
+        with open(output_filename, "rb") as f:
+            st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
+
