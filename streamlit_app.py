@@ -460,6 +460,7 @@ elif transformation_choice == "30010013 酒田":
 
         with open(output_filename, "rb") as f:
             st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
+            
 elif transformation_choice == "30010059 誠邦有限公司":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="raw_30010059")
     mapping_file = st.file_uploader("Upload Mapping File", type=["xlsx"], key="mapping_30010059")
@@ -471,7 +472,7 @@ elif transformation_choice == "30010059 誠邦有限公司":
         offset = 0
         for _, row in raw_df.iterrows():
             col_b = str(row[1]).strip() if pd.notna(row[1]) else ""
-            if col_b.startswith("銷"):
+            if "銷" in col_b:
                 offset = 0  # Format A: has extra column starting with "銷"
             else:
                 offset = 1  # Format B: everything shifted one column left
