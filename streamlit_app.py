@@ -480,7 +480,7 @@ elif transformation_choice == "30010059 誠邦有限公司":
                     offset = 0  # Format A
                 else:
                     offset = 1  # Format B
-                start_row = i - 1  # Include product line before transactions
+                start_row = i
                 break
 
         data = []
@@ -502,14 +502,12 @@ elif transformation_choice == "30010059 誠邦有限公司":
                 if match:
                     current_product_code = match.group(1).strip()
                     current_product_name = match.group(2).strip()
-
-            if current_product_code is None or current_product_name is None:
-                continue  # wait until we have product info
+                continue
 
             if "合計" in col_a_clean or "小計" in col_a_clean:
                 continue
 
-            if col_c and isinstance(col_e, (int, float)):
+            if col_c and isinstance(col_e, (int, float)) and current_product_code and current_product_name:
                 try:
                     y, m, d = map(int, col_a_clean.split("/"))
                     if y < 1911:
