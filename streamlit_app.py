@@ -499,7 +499,7 @@ elif transformation_choice == "30010059 誠邦有限公司":
             col_a_clean = col_a.replace('\u3000', ' ').replace('\xa0', ' ').strip()
 
             if "貨品編號:" in col_a_clean:
-                match = re.search(r"貨品編號:\s*\[([^\]]+)\]\s*(.+)", col_a_clean)
+                match = re.search(r"貨品編號:\s*[\[\【]([^\]\】]+)[\]\】]\s*(.+)", col_a_clean)
                 if match:
                     current_product_code = match.group(1).strip()
                     current_product_name = match.group(2).strip()
