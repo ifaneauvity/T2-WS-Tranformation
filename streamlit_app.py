@@ -1185,7 +1185,7 @@ elif transformation_choice == "30010176 振泰 ON":
         )
 
 elif transformation_choice == "30030094 和易 ON":
-    raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="heyi_raw")
+    raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xls," "xlsx"], key="heyi_raw")
     mapping_file = st.file_uploader("Upload Mapping File", type=["xlsx"], key="heyi_mapping")
 
     if raw_data_file and mapping_file:
