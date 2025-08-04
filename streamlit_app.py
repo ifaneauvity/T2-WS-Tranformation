@@ -461,7 +461,7 @@ elif transformation_choice == "30010013 酒田":
         with open(output_filename, "rb") as f:
             st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
             
-elif transformation_choice == "30010059 誠邦有限公司":
+elif transformation_choice == "30010059 誠魯有限公司":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="raw_30010059")
     mapping_file = st.file_uploader("Upload Mapping File", type=["xlsx"], key="mapping_30010059")
 
@@ -476,11 +476,11 @@ elif transformation_choice == "30010059 誠邦有限公司":
             col_a = str(row[0]).strip() if pd.notna(row[0]) else ""
             col_b = str(row[1]).strip() if pd.notna(row[1]) else ""
             if re.match(r"\d{4}/\d{2}/\d{2}|\d{3}/\d{2}/\d{2}", col_a):
-                if col_b.startswith("銷"):
+                if col_b.startswith("\u92b7"):
                     offset = 0  # Format A
                 else:
                     offset = 1  # Format B
-                start_row = i
+                start_row = i - 1  # include product row
                 break
 
         data = []
@@ -502,7 +502,6 @@ elif transformation_choice == "30010059 誠邦有限公司":
                 if match:
                     current_product_code = match.group(1).strip()
                     current_product_name = match.group(2).strip()
-                continue
 
             if "合計" in col_a_clean or "小計" in col_a_clean:
                 continue
@@ -578,7 +577,7 @@ elif transformation_choice == "30010059 誠邦有限公司":
         df_final.to_excel(output_filename, index=False, header=False)
 
         with open(output_filename, "rb") as f:
-            st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
+            st.download_button(label="📅 Download Processed File", data=f, file_name=output_filename)
 
 
 elif transformation_choice == "30010315 圳程":
