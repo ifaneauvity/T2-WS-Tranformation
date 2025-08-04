@@ -86,7 +86,7 @@ if transformation_choice == "30010085 宏酒樽 (夜)":
             st.dataframe(df_transformed)
             
             # Export without headers
-            output_filename = "processed_macro.xlsx"
+            output_filename = "30010085 transformation.xlsx"
             df_transformed.to_excel(output_filename, index=False, header=False)
             
             with open(output_filename, "rb") as f:
@@ -173,7 +173,7 @@ elif transformation_choice == "30010203 宏酒樽 (日)":
             st.dataframe(df_transformed)
             
             # Export without headers
-            output_filename = "processed_macro.xlsx"
+            output_filename = "30010203 transformation.xlsx"
             df_transformed.to_excel(output_filename, index=False, header=False)
             
             with open(output_filename, "rb") as f:
@@ -266,7 +266,7 @@ elif transformation_choice == "30010061 向日葵":
         st.write("✅ Processed Data Preview:")
         st.dataframe(result_df)
 
-        output_filename = "processed_sunflower.xlsx"
+        output_filename = "30010061 transformation.xlsx"
         result_df.to_excel(output_filename, index=False, header=False)
 
         with open(output_filename, "rb") as f:
