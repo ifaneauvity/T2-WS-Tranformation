@@ -461,7 +461,7 @@ elif transformation_choice == "30010013 酒田":
         with open(output_filename, "rb") as f:
             st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
             
-elif transformation_choice == "30010059 誠魯有限公司":
+elif transformation_choice == "30010059 誠邦有限公司":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="raw_30010059")
     mapping_file = st.file_uploader("Upload Mapping File", type=["xlsx"], key="mapping_30010059")
 
@@ -486,6 +486,7 @@ elif transformation_choice == "30010059 誠魯有限公司":
         data = []
         current_product_code = None
         current_product_name = None
+        found_first_product = False
 
         for i in range(start_row, len(raw_df)):
             row = raw_df.iloc[i]
@@ -502,6 +503,11 @@ elif transformation_choice == "30010059 誠魯有限公司":
                 if match:
                     current_product_code = match.group(1).strip()
                     current_product_name = match.group(2).strip()
+                    found_first_product = True
+                continue  # Skip processing this row, go to next for transactions
+
+            if not found_first_product:
+                continue  # Wait until first product is found
 
             if "合計" in col_a_clean or "小計" in col_a_clean:
                 continue
@@ -578,7 +584,6 @@ elif transformation_choice == "30010059 誠魯有限公司":
 
         with open(output_filename, "rb") as f:
             st.download_button(label="📅 Download Processed File", data=f, file_name=output_filename)
-
 
 elif transformation_choice == "30010315 圳程":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="zc_raw")
