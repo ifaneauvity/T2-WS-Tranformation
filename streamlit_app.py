@@ -603,14 +603,22 @@ elif transformation_choice == "30010315 圳程":
         wb = openpyxl.load_workbook(raw_data_file, data_only=True)
         ws = wb.active
 
-        # Extract report date from B3
-        report_date_raw = str(ws["B3"].value).strip() if ws["B3"].value else ""
+        # Try B3, then B4 if B3 is empty
+        report_date_raw = ""
+        for cell in ["B3", "B4"]:
+            val = ws[cell].value
+            if val:
+                report_date_raw = str(val).strip()
+                break
+
+        # Parse the date string if available
         report_date = ""
         if "~" in report_date_raw:
             right_date = report_date_raw.split("~")[-1].strip()
             if len(right_date.split("/")) == 3:
                 y, m, d = right_date.split("/")
                 report_date = f"{int(y):04}{int(m):02}{int(d):02}"
+
 
 
         records = []
