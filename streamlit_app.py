@@ -468,14 +468,14 @@ elif transformation_choice == "30010059 誠邦有限公司":
     if raw_data_file is not None and mapping_file is not None:
         raw_df = pd.read_excel(raw_data_file, sheet_name=0, header=None)
 
-        # Detect format by scanning column B content
+        # Determine offset by inspecting first row with non-empty col_b
         offset = 0
         for _, row in raw_df.iterrows():
             col_b = str(row[1]).strip() if pd.notna(row[1]) else ""
-            if "銷" in col_b:
-                offset = 0  # Format A: has extra column starting with "銷"
+            if col_b.startswith("銷"):
+                offset = 0  # Format A
             else:
-                offset = 1  # Format B: everything shifted one column left
+                offset = 1  # Format B
             break
 
         data = []
@@ -489,6 +489,7 @@ elif transformation_choice == "30010059 誠邦有限公司":
             col_d = str(row[3 - offset]).strip() if pd.notna(row[3 - offset]) else ""
             col_e = row[4 - offset] if pd.notna(row[4 - offset]) else None
 
+            # Clean and identify product
             col_a_clean = col_a.replace('\u3000', ' ').replace('\xa0', ' ').strip()
 
             if "貨品編號:" in col_a_clean:
@@ -536,7 +537,7 @@ elif transformation_choice == "30010059 誠邦有限公司":
             right_on="ASI_CRM_Offtake_Customer_No__c",
             how="left"
         )
-        df_cleaned["Customer Code"] = df_cleaned["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.replace(r"\\.0$", "", regex=True)
+        df_cleaned["Customer Code"] = df_cleaned["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.replace(r"\.0$", "", regex=True)
         df_cleaned.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
 
         df_sku_mapping = dfs_mapping["SKU Mapping"]
@@ -571,6 +572,7 @@ elif transformation_choice == "30010059 誠邦有限公司":
 
         with open(output_filename, "rb") as f:
             st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
+
 
 elif transformation_choice == "30010315 圳程":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="zc_raw")
