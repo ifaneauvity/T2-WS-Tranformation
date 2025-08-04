@@ -1310,7 +1310,7 @@ elif transformation_choice == "33001422 和易 OFF":
             if col3.startswith("品名規格:"):
                 product_name = col3.replace("品名規格:", "").strip()
 
-            if str(row[3]).strip() == "銷貨（庫存）":
+            if str(row[3]).strip() in ["銷貨（庫存）", "銷貨退回"]:
                 report_date = row[0]
                 document_number = row[1]
                 customer_name = row[2]
@@ -1318,13 +1318,16 @@ elif transformation_choice == "33001422 和易 OFF":
                 customer_code = row[9]
 
                 if all(pd.notna([report_date, document_number, customer_name, quantity, customer_code])):
+                    qty = int(quantity)
+                    if str(row[3]).strip() == "銷貨退回":
+                        qty = -qty
                     extracted_data.append({
                         "Customer Code": str(customer_code).strip(),
                         "Customer Name": str(customer_name).strip(),
                         "Date": report_date,
                         "Product Code": product_code,
                         "Product Name": product_name,
-                        "Quantity": int(quantity),
+                        "Quantity": qty,
                         "Document Number": document_number
                     })
 
@@ -1389,3 +1392,4 @@ elif transformation_choice == "33001422 和易 OFF":
 
         with open(output_filename, "rb") as f:
             st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
+
