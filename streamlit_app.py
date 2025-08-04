@@ -1102,7 +1102,7 @@ elif transformation_choice == "30010199 振泰 OFF":
 
         # Export to Excel (remove first row, no headers)
         output_filename = "30010199_transformation.xlsx"
-        df_export = df.iloc[1:].copy()
+        df_export = df.copy()
         df_export.to_excel(output_filename, index=False, header=False)
 
         with open(output_filename, "rb") as f:
@@ -1242,7 +1242,7 @@ elif transformation_choice == "30010176 振泰 ON":
 
         # Export to Excel (remove first row, no headers)
         output_filename = "30010176_transformation.xlsx"
-        df_export = df.iloc[1:].copy()
+        df_export = df.copy()
         df_export.to_excel(output_filename, index=False, header=False)
 
         with open(output_filename, "rb") as f:
