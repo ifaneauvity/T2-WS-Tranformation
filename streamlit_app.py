@@ -8,7 +8,7 @@ st.write("Upload an Excel file and choose the transformation format.")
 
 # Select transformation format
 transformation_choice = st.selectbox("Select Transformation Format:", ["30010085 宏酒樽 (夜)", "30010203 宏酒樽 (日)", "30010061 向日葵", "30010010 酒倉盛豐行", "30010013 酒田", "30010059 誠邦有限公司", "30010315 圳程", "30030088 九久", "30020145 鏵錡", "30010199 振泰 OFF", "30010176 振泰 ON", "30030094 和易 ON", "33001422 和易 OFF"
-                                                                      , "30010017 正興(振興)", "30010031 廣茂隆(八條)", "30020016 日嵩", "30020027 榮好(實儀)", "30020180 暐倫 OFF", "30020203 玄星 OFF", "30020216 久悅貿易", "30030061 合歡 OFF"])
+                                                                      , "30010017 正興(振興)", "30010031 廣茂隆(八條)", "30020016 日嵩", "30020027 榮好(實儀)", "30020180 暐倫 OFF", "30020203 玄星 OFF", "30020216 久悅貿易", "30030061 合歡 OFF", "30030076 裕陞（分月）"])
 
 if transformation_choice == "30010085 宏酒樽 (夜)":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="new_raw")
@@ -2695,3 +2695,185 @@ elif transformation_choice == "30030061 合歡 OFF":
                 file_name=output_filename
             )
 
+elif transformation_choice == "30030076 裕陞（分月）":
+    import re
+    import pandas as pd
+    import streamlit as st
+
+    raw_data_file = st.file_uploader("Upload Raw Sales Data (.xlsx)", type=["xlsx"], key="yusheng_monthly_raw")
+    mapping_file  = st.file_uploader("Upload Mapping File (.xlsx)", type=["xlsx"], key="yusheng_monthly_map")
+
+    if raw_data_file is not None and mapping_file is not None:
+        # ---------- Helpers ----------
+        def norm_cust(s: str) -> str:
+            s = str(s).strip().upper().replace(" ", "")
+            return re.sub(r"\.0$", "", s)
+
+        def norm_sku(s: str) -> str:
+            return str(s).strip().upper()
+
+        # ---------- 1) Parse ALL sheets ----------
+        xls = pd.ExcelFile(raw_data_file)
+        sheets = xls.sheet_names
+
+        def extract_sheet(sheet_name: str) -> pd.DataFrame:
+            df = pd.read_excel(raw_data_file, sheet_name=sheet_name, header=None)
+            if df.empty:
+                return pd.DataFrame()
+
+            # Find header row: A=日期, B=銷貨單號, C=客戶編號, D=客戶簡稱
+            header_idx = None
+            for i in range(min(40, len(df))):
+                a = str(df.iat[i, 0]).strip() if pd.notna(df.iat[i, 0]) else ""
+                b = str(df.iat[i, 1]).strip() if pd.notna(df.iat[i, 1]) else ""
+                c = str(df.iat[i, 2]).strip() if pd.notna(df.iat[i, 2]) else ""
+                d = str(df.iat[i, 3]).strip() if pd.notna(df.iat[i, 3]) else ""
+                if a == "日期" and b == "銷貨單號" and c == "客戶編號" and d == "客戶簡稱":
+                    header_idx = i
+                    break
+            if header_idx is None:
+                return pd.DataFrame()
+
+            # Search a few rows ABOVE header for product line:
+            # pattern 1: col0 = 6+ digits, col1 = name
+            # pattern 2: col0 = "<digits> <name>"
+            prod_code, prod_name = "", ""
+            for r in range(header_idx - 1, max(-1, header_idx - 9), -1):
+                c0 = df.iat[r, 0] if r >= 0 else None
+                c1 = df.iat[r, 1] if (r >= 0 and df.shape[1] > 1) else None
+                s0 = str(c0).strip() if pd.notna(c0) else ""
+                s1 = str(c1).strip() if pd.notna(c1) else ""
+                if re.fullmatch(r"\d{6,}", s0) and s1:
+                    prod_code, prod_name = s0, s1
+                    break
+                m = re.match(r"^\s*(\d{6,})\s+(.+)$", s0)
+                if m and ":" not in s0 and "/" not in s0:
+                    prod_code, prod_name = m.group(1).strip(), m.group(2).strip()
+                    break
+
+            rows = []
+            for r in range(header_idx + 1, len(df)):
+                a = df.iat[r, 0]
+                if isinstance(a, str) and ("列印日期" in a or "列印" in a):
+                    break
+
+                try:
+                    date_fmt = pd.to_datetime(a).strftime("%Y%m%d")
+                except Exception:
+                    date_fmt = None
+
+                doc  = df.iat[r, 1]
+                cc   = df.iat[r, 2]
+                cname= df.iat[r, 3]
+                qty  = pd.to_numeric(df.iat[r, 4], errors="coerce")
+
+                if pd.notna(qty) and qty != 0 and date_fmt:
+                    rows.append({
+                        "Date": date_fmt,
+                        "DocumentNo": str(doc).strip() if pd.notna(doc) else "",
+                        "CustomerCode_ext": str(cc).strip() if pd.notna(cc) else "",
+                        "CustomerName": str(cname).strip() if pd.notna(cname) else "",
+                        "ProductCode": prod_code,
+                        "ProductName": prod_name,
+                        "Quantity": int(float(qty))
+                    })
+            return pd.DataFrame(rows)
+
+        df_all = pd.concat([d for d in (extract_sheet(s) for s in sheets) if not d.empty], ignore_index=True)
+        if df_all.empty:
+            st.warning("No valid rows found across sheets.")
+            st.stop()
+
+        # Combine duplicates within the same document/customer/product/date
+        group_keys = ["Date","DocumentNo","CustomerCode_ext","CustomerName","ProductCode","ProductName"]
+        df_all = df_all.groupby(group_keys, as_index=False)["Quantity"].sum()
+
+        # ---------- 2) Load mappings (unique-only; prefer filtered to 30030076, then global) ----------
+        cust_map = pd.read_excel(mapping_file, sheet_name="Customer Mapping", dtype=str)
+        sku_map  = pd.read_excel(mapping_file, sheet_name="SKU Mapping", dtype=str)
+
+        cust_f = cust_map[cust_map["ASI_CRM_Mapping_Cust_No__c"].astype(str).str.replace(r"\.0$", "", regex=True) == "30030076"].copy()
+        sku_f  = sku_map[ sku_map["ASI_CRM_Mapping_Cust_Code__c"].astype(str).str.replace(r"\.0$", "", regex=True) == "30030076"].copy()
+
+        def prep_cust(dfm):
+            out = dfm.copy()
+            out["key"] = (out["ASI_CRM_Offtake_Customer_No__c"].astype(str)
+                          .str.strip().str.upper().str.replace(r"\.0$", "", regex=True)
+                          .str.replace(" ", "", regex=False))
+            out["val"] = out["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.strip()
+            return out[["key","val"]]
+
+        def prep_sku(dfm):
+            out = dfm.copy()
+            out["key"] = out["ASI_CRM_Offtake_Product__c"].astype(str).str.strip().str.upper()
+            out["val"] = out["ASI_CRM_SKU_Code__c"].astype(str).str.strip()
+            return out[["key","val"]]
+
+        def unique_only(kv: pd.DataFrame) -> pd.DataFrame:
+            g = kv.groupby("key")["val"].nunique().reset_index(name="n")
+            uniq = g[g["n"] == 1]["key"]
+            return kv[kv["key"].isin(uniq)].drop_duplicates(subset=["key"], keep="first")
+
+        cust_f_dict   = dict(zip(unique_only(prep_cust(cust_f))["key"],   unique_only(prep_cust(cust_f))["val"]))
+        cust_all_dict = dict(zip(unique_only(prep_cust(cust_map))["key"], unique_only(prep_cust(cust_map))["val"]))
+        sku_f_dict    = dict(zip(unique_only(prep_sku(sku_f))["key"],     unique_only(prep_sku(sku_f))["val"]))
+        sku_all_dict  = dict(zip(unique_only(prep_sku(sku_map))["key"],   unique_only(prep_sku(sku_map))["val"]))
+
+        # Normalize and map
+        df_all["CustomerCode_norm"] = df_all["CustomerCode_ext"].apply(norm_cust)
+        df_all["ProductCode_norm"]  = df_all["ProductCode"].apply(norm_sku)
+
+        jde_from_filtered = df_all["CustomerCode_norm"].map(cust_f_dict)
+        jde_from_global   = df_all["CustomerCode_norm"].map(cust_all_dict)
+        # Leave blank if unmapped (do NOT keep external)
+        df_all["CustomerCode_final"] = jde_from_filtered.combine_first(jde_from_global).fillna("")
+
+        prt_from_filtered = df_all["ProductCode_norm"].map(sku_f_dict)
+        prt_from_global   = df_all["ProductCode_norm"].map(sku_all_dict)
+        df_all["PRT_Product_Code"]   = prt_from_filtered.fillna(prt_from_global)
+
+        # ---------- 3) Assemble final + Month key ----------
+        df_all["Month"] = df_all["Date"].astype(str).str[:6]
+        df_final = pd.DataFrame({
+            "Type": "INV",
+            "Action": "U",
+            "GroupCode": "30030076",
+            "GroupName": "裕陞",
+            "CustomerCode": df_all["CustomerCode_final"],
+            "CustomerName": df_all["CustomerName"],
+            "Date": df_all["Date"],
+            "PRT_Product_Code": df_all["PRT_Product_Code"],
+            "ProductCode": df_all["ProductCode_norm"],
+            "ProductName": df_all["ProductName"],
+            "Quantity": df_all["Quantity"].astype(int),
+            "DocumentNo": df_all["DocumentNo"],
+            "Month": df_all["Month"],
+        })
+
+        # Conservative de-dup (keep doc number)
+        dedup_keys = ["DocumentNo","CustomerCode","Date","ProductCode","ProductName","Quantity"]
+        df_all_final = df_final.drop_duplicates(subset=dedup_keys, keep="first").reset_index(drop=True)
+
+        # ---------- 4) UI: Month picker + Export ----------
+        available_months = sorted(df_all_final["Month"].dropna().astype(str).unique().tolist())
+        month_filter = st.radio("📅 Filter by Month:", ["All"] + available_months, index=0)
+
+        if month_filter != "All":
+            df_view = df_all_final[df_all_final["Month"] == month_filter].copy()
+        else:
+            df_view = df_all_final.copy()
+
+        # Drop helper Month from display/export (keep DocumentNo for safety)
+        df_view = df_view[[
+            "Type","Action","GroupCode","GroupName",
+            "CustomerCode","CustomerName","Date",
+            "PRT_Product_Code","ProductCode","ProductName","Quantity","DocumentNo"
+        ]]
+
+        st.write("✅ Processed Data Preview:")
+        st.dataframe(df_view)
+
+        out_name = "30030076_裕陞_all_months.xlsx" if month_filter == "All" else f"30030076_裕陞_{month_filter}.xlsx"
+        df_view.to_excel(out_name, index=False, header=False)
+        with open(out_name, "rb") as f:
+            st.download_button("📥 Download Selected Month", f, file_name=out_name)
