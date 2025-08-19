@@ -2142,27 +2142,20 @@ elif transformation_choice == "30020203 玄星 OFF":
             if pd.isna(val):
                 return None
             s = str(val).strip()
-            # Expect like 114/07/11
             try:
                 y, m, d = s.split("/")
-                y = int(y)
-                m = int(m)
-                d = int(d)
-                if y < 1911:
-                    y += 1911
+                y, m, d = int(y), int(m), int(d)
+                if y < 1911: y += 1911
                 return f"{y:04d}{m:02d}{d:02d}"
             except Exception:
-                # Try pandas fallback (in case it's already Gregorian)
                 try:
                     return pd.to_datetime(s).strftime("%Y%m%d")
                 except Exception:
                     return None
 
         def to_int(x):
-            try:
-                return int(float(x))
-            except:
-                return 0
+            try: return int(float(x))
+            except: return 0
 
         def norm_cust(s: str) -> str:
             s = str(s).strip().upper().replace(" ", "")
@@ -2172,15 +2165,15 @@ elif transformation_choice == "30020203 玄星 OFF":
             return str(s).strip().upper()
 
         # ---------------------------
-        # 1) Load all monthly sheets (skip any non-114xx tabs)
+        # 1) Load all monthly sheets named like 11401..11412
         # ---------------------------
         xls = pd.ExcelFile(raw_data_file)
-        month_sheets = [s for s in xls.sheet_names if re.fullmatch(r"\d{5}", s)]  # e.g., '11407'
+        month_sheets = [s for s in xls.sheet_names if re.fullmatch(r"\d{5}", s)]
 
         def extract_month(sheet_name: str) -> pd.DataFrame:
             df = pd.read_excel(raw_data_file, sheet_name=sheet_name, header=None)
 
-            # Find header row: expect row where C="客戶編號", D="客戶簡稱", E="產品編號"
+            # find header row where C="客戶編號", D="客戶簡稱", E="產品編號"
             header_idx = None
             for i in range(min(25, len(df))):
                 c = str(df.iat[i, 2]).strip() if df.shape[1] > 2 else ""
@@ -2193,20 +2186,18 @@ elif transformation_choice == "30020203 玄星 OFF":
                 return pd.DataFrame()
 
             rows = []
-            # Data rows start after header, stop at "合計"
             for r in range(header_idx + 1, len(df)):
                 if str(df.iat[r, 0]).strip() == "合計":
                     break
 
-                date_cell = df.iat[r, 0]                  # 日期 (Minguo)
-                cust_code = df.iat[r, 2]                  # 客戶編號
-                cust_name = df.iat[r, 3]                  # 客戶簡稱
-                prod_code = df.iat[r, 4]                  # 產品編號
-                prod_name = df.iat[r, 5]                  # 名稱規格
-                sales_qty = df.iat[r, 6]                  # 銷售數量
-                free_qty  = df.iat[r, 7] if df.shape[1] > 7 else 0  # 贈送數量
+                date_cell = df.iat[r, 0]
+                cust_code = df.iat[r, 2]
+                cust_name = df.iat[r, 3]
+                prod_code = df.iat[r, 4]
+                prod_name = df.iat[r, 5]
+                sales_qty = df.iat[r, 6]
+                free_qty  = df.iat[r, 7] if df.shape[1] > 7 else 0
 
-                # skip blank lines
                 if pd.isna(prod_code) and pd.isna(prod_name) and pd.isna(cust_code):
                     continue
 
@@ -2226,13 +2217,13 @@ elif transformation_choice == "30020203 玄星 OFF":
 
         df_all = pd.concat([extract_month(s) for s in month_sheets], ignore_index=True)
 
-        # ---------------------------
-        # 2) Normalize keys & compute YYYYMM for grouping
-        # ---------------------------
         if df_all.empty:
             st.warning("No valid rows found across monthly tabs.")
             st.stop()
 
+        # ---------------------------
+        # 2) Normalize + month key
+        # ---------------------------
         df_all["CustomerCode_norm"] = df_all["CustomerCode"].apply(norm_cust)
         df_all["ProductCode_norm"]  = df_all["ProductCode"].apply(norm_sku)
         df_all["Month"] = df_all["Date"].astype(str).str[:6]  # YYYYMM
@@ -2269,20 +2260,21 @@ elif transformation_choice == "30020203 玄星 OFF":
         sku_f_dict    = dict(zip(unique_only(prep_sku(sku_f))["key"],     unique_only(prep_sku(sku_f))["val"]))
         sku_all_dict  = dict(zip(unique_only(prep_sku(sku_map))["key"],   unique_only(prep_sku(sku_map))["val"]))
 
-        # Apply mappings (non-forced)
+        # ---------------------------
+        # 4) Apply mapping
+        #     CHANGE: if no mapping, leave CustomerCode blank (not original)
+        # ---------------------------
         jde_from_filtered = df_all["CustomerCode_norm"].map(cust_f_dict)
         jde_from_global   = df_all["CustomerCode_norm"].map(cust_all_dict)
-        df_all["CustomerCode_final"] = (
-            jde_from_filtered.fillna(jde_from_global).fillna(df_all["CustomerCode_norm"])
-            .astype(str).str.replace(r"\.0$", "", regex=True)
-        )
+        mapped_jde        = jde_from_filtered.combine_first(jde_from_global)
+        df_all["CustomerCode_final"] = mapped_jde.fillna("")  # blank when unmapped
 
         prt_from_filtered = df_all["ProductCode_norm"].map(sku_f_dict)
         prt_from_global   = df_all["ProductCode_norm"].map(sku_all_dict)
-        df_all["PRT_Product_Code"] = prt_from_filtered.fillna(prt_from_global)  # keep NaN if still missing
+        df_all["PRT_Product_Code"] = prt_from_filtered.fillna(prt_from_global)  # leave NaN if missing
 
         # ---------------------------
-        # 4) Build final frame (for all months)
+        # 5) Build final frame (all months), de-dupe
         # ---------------------------
         df_all_final = pd.DataFrame({
             "Type": "INV",
@@ -2303,9 +2295,9 @@ elif transformation_choice == "30020203 玄星 OFF":
         df_all_final = df_all_final.drop_duplicates(subset=dedup_keys, keep="first").reset_index(drop=True)
 
         # ---------------------------
-        # 5) UI: Toggle by Month (📅)
+        # 6) UI: Toggle by Month (📅)
         # ---------------------------
-        available_months = sorted(m for m in df_all_final["Month"].dropna().astype(str).unique())
+        available_months = sorted(df_all_final["Month"].dropna().astype(str).unique().tolist())
         month_filter = st.radio("📅 Filter by Month:", ["All"] + available_months, index=0)
 
         if month_filter != "All":
@@ -2324,17 +2316,10 @@ elif transformation_choice == "30020203 玄星 OFF":
         st.dataframe(df_view)
 
         # ---------------------------
-        # 6) Export selection (no headers / no index)
+        # 7) Export selection (no headers / no index)
         # ---------------------------
-        if month_filter == "All":
-            output_filename = "30020203_玄星OFF_all_months.xlsx"
-        else:
-            output_filename = f"30020203_玄星OFF_{month_filter}.xlsx"
+        out_name = "30020203_玄星OFF_all_months.xlsx" if month_filter == "All" else f"30020203_玄星OFF_{month_filter}.xlsx"
+        df_view.to_excel(out_name, index=False, header=False)
+        with open(out_name, "rb") as f:
+            st.download_button(label="📥 Download Selected Month", data=f, file_name=out_name)
 
-        df_view.to_excel(output_filename, index=False, header=False)
-        with open(output_filename, "rb") as f:
-            st.download_button(
-                label="📥 Download Selected Month",
-                data=f,
-                file_name=output_filename
-            )
