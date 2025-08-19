@@ -8,7 +8,7 @@ st.write("Upload an Excel file and choose the transformation format.")
 
 # Select transformation format
 transformation_choice = st.selectbox("Select Transformation Format:", ["30010085 宏酒樽 (夜)", "30010203 宏酒樽 (日)", "30010061 向日葵", "30010010 酒倉盛豐行", "30010013 酒田", "30010059 誠邦有限公司", "30010315 圳程", "30030088 九久", "30020145 鏵錡", "30010199 振泰 OFF", "30010176 振泰 ON", "30030094 和易 ON", "33001422 和易 OFF"
-                                                                      , "30010017 正興(振興)", "30010031 廣茂隆(八條)"])
+                                                                      , "30010017 正興(振興)", "30010031 廣茂隆(八條)", "30020016 日嵩"])
 
 if transformation_choice == "30010085 宏酒樽 (夜)":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="new_raw")
@@ -1703,3 +1703,173 @@ elif transformation_choice == "30010031 廣茂隆(八條)":
                 file_name=output_filename
             )
 
+elif transformation_choice == "30020016 日嵩":
+    import re
+    import pandas as pd
+    import streamlit as st
+
+    raw_data_file = st.file_uploader("Upload Raw Sales Data (.xlsx)", type=["xlsx"], key="risong_raw")
+    mapping_file  = st.file_uploader("Upload Mapping File (.xlsx)", type=["xlsx"], key="risong_mapping")
+
+    if raw_data_file is not None and mapping_file is not None:
+        # ---------------------------
+        # 1) Load & detect header row
+        # ---------------------------
+        xls = pd.ExcelFile(raw_data_file)
+        sheet = xls.sheet_names[0]  # expected 'AAA'
+        raw = pd.read_excel(raw_data_file, sheet_name=sheet, header=None)
+
+        header_row_idx = None
+        for i in range(min(15, len(raw))):
+            row_vals = raw.iloc[i].astype(str).tolist()
+            # Look for a line that contains the expected column markers
+            if ("貨號" in row_vals[0]) and ("客戶" in (row_vals[2] if len(row_vals) > 2 else "")):
+                header_row_idx = i
+                break
+        if header_row_idx is None:
+            header_row_idx = 3  # fallback seen in sample
+
+        df = pd.read_excel(raw_data_file, sheet_name=sheet, header=None, skiprows=header_row_idx)
+        df.columns = ["ProductCode","ProductName","CustomerCode","CustomerName","FreeQty","SalesQty","ReturnQty","NetQty"]
+
+        # Remove any lingering header line
+        df = df[df["CustomerCode"] != "客戶"].copy()
+
+        # ---------------------------
+        # 2) Normalize & numeric cast
+        # ---------------------------
+        for col in ["FreeQty","SalesQty","ReturnQty","NetQty"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
+
+        # Keep only rows with net ≠ 0
+        df = df[df["NetQty"] != 0].copy()
+
+        # ---------------------------
+        # 3) Date from banner (end date)
+        # ---------------------------
+        # Parse row 2 (0-based) for banner like: "統計日期: 2024/09/01 至 2024/09/30"
+        row2 = " ".join([str(x) for x in raw.iloc[2].tolist() if pd.notna(x)])
+        dates = re.findall(r'(\d{4})/(\d{2})/(\d{2})', row2)
+        date_val = None
+        if dates:
+            y, m, d = dates[-1]                   # use end date
+            date_val = f"{y}{m}{d}"
+        df["Date"] = date_val
+
+        # ---------------------------
+        # 4) Key normalization helpers
+        # ---------------------------
+        def norm_cust(s: str) -> str:
+            s = str(s).strip()
+            s = re.sub(r'\.0$', '', s)           # remove trailing .0
+            s = s.upper().replace(' ', '')
+            return s
+
+        def norm_sku(s: str) -> str:
+            s = str(s).strip().upper().replace(' ', '')
+            # normalize full-width letters if they ever appear
+            s = s.replace('Ｌ', 'L').replace('Ａ', 'A').replace('Ｂ', 'B')
+            return s
+
+        df["CustomerCode_norm"] = df["CustomerCode"].apply(norm_cust)
+        df["ProductCode_norm"]  = df["ProductCode"].apply(norm_sku)
+
+        # ---------------------------
+        # 5) Load mappings (dtype=str)
+        # ---------------------------
+        cust_map = pd.read_excel(mapping_file, sheet_name="Customer Mapping", dtype=str)
+        sku_map  = pd.read_excel(mapping_file, sheet_name="SKU Mapping", dtype=str)
+
+        # Filter to this wholesaler where available, but still fallback to global
+        cust_map_f = cust_map[cust_map["ASI_CRM_Mapping_Cust_No__c"].astype(str).str.replace(r"\.0$", "", regex=True) == "30020016"].copy()
+        sku_map_f  = sku_map[ sku_map["ASI_CRM_Mapping_Cust_Code__c"].astype(str).str.replace(r"\.0$", "", regex=True) == "30020016"].copy()
+
+        # Prepare normalized join keys in mappings
+        for dfm in (cust_map_f, cust_map):
+            dfm["ASI_CRM_Offtake_Customer_No__c_norm"] = (
+                dfm["ASI_CRM_Offtake_Customer_No__c"].astype(str)
+                .str.strip().str.upper().str.replace(r"\.0$", "", regex=True).str.replace(' ', '', regex=False)
+            )
+        for dfm in (sku_map_f, sku_map):
+            dfm["ASI_CRM_Offtake_Product__c_norm"] = (
+                dfm["ASI_CRM_Offtake_Product__c"].astype(str)
+                .str.strip().str.upper().str.replace(' ', '', regex=False)
+            )
+
+        # ---------------------------
+        # 6) Customer mapping (two-stage, non-forced)
+        # ---------------------------
+        df = df.merge(
+            cust_map_f[["ASI_CRM_Offtake_Customer_No__c_norm","ASI_CRM_JDE_Cust_No_Formula__c"]],
+            left_on="CustomerCode_norm", right_on="ASI_CRM_Offtake_Customer_No__c_norm", how="left"
+        )
+        df["CustomerCode_mapped"] = df["ASI_CRM_JDE_Cust_No_Formula__c"]
+
+        miss_mask = df["CustomerCode_mapped"].isna()
+        if miss_mask.any():
+            df = df.merge(
+                cust_map[["ASI_CRM_Offtake_Customer_No__c_norm","ASI_CRM_JDE_Cust_No_Formula__c"]],
+                left_on="CustomerCode_norm", right_on="ASI_CRM_Offtake_Customer_No__c_norm",
+                how="left", suffixes=('','_all')
+            )
+            df["CustomerCode_mapped"] = df["CustomerCode_mapped"].fillna(df["ASI_CRM_JDE_Cust_No_Formula__c_all"])
+
+        # Final customer code: prefer mapped JDE; else keep normalized original
+        df["CustomerCode_final"] = (
+            df["CustomerCode_mapped"].fillna(df["CustomerCode_norm"])
+            .astype(str).str.replace(r"\.0$", "", regex=True)
+        )
+
+        # ---------------------------
+        # 7) SKU mapping (two-stage, non-forced)
+        # ---------------------------
+        df = df.merge(
+            sku_map_f[["ASI_CRM_Offtake_Product__c_norm","ASI_CRM_SKU_Code__c"]],
+            left_on="ProductCode_norm", right_on="ASI_CRM_Offtake_Product__c_norm", how="left"
+        )
+        df["PRT_Product_Code"] = df["ASI_CRM_SKU_Code__c"]
+
+        miss_sku = df["PRT_Product_Code"].isna()
+        if miss_sku.any():
+            df = df.merge(
+                sku_map[["ASI_CRM_Offtake_Product__c_norm","ASI_CRM_SKU_Code__c"]],
+                left_on="ProductCode_norm", right_on="ASI_CRM_Offtake_Product__c_norm",
+                how="left", suffixes=('','_all')
+            )
+            df["PRT_Product_Code"] = df["PRT_Product_Code"].fillna(df["ASI_CRM_SKU_Code__c_all"])
+
+        # ---------------------------
+        # 8) Assemble final frame
+        # ---------------------------
+        df_final = pd.DataFrame({
+            "Type": "INV",
+            "Action": "U",
+            "GroupCode": "30020016",
+            "GroupName": "日嵩",
+            "CustomerCode": df["CustomerCode_final"],
+            "CustomerName": df["CustomerName"],
+            "Date": df["Date"],
+            "PRT_Product_Code": df["PRT_Product_Code"],
+            "ProductCode": df["ProductCode_norm"],
+            "ProductName": df["ProductName"],
+            "Quantity": df["NetQty"].astype(int)
+        })
+
+        # De-duplicate exact duplicates
+        dedup_keys = ["GroupCode","CustomerCode","Date","ProductCode","Quantity"]
+        df_final = df_final.drop_duplicates(subset=dedup_keys, keep="first").reset_index(drop=True)
+
+        # ---------------------------
+        # 9) Preview + Export
+        # ---------------------------
+        st.write("✅ Processed Data Preview:")
+        st.dataframe(df_final)
+
+        output_filename = "30020016 transformation.xlsx"
+        df_final.to_excel(output_filename, index=False, header=False)  # no headers, no index
+        with open(output_filename, "rb") as f:
+            st.download_button(
+                label="📥 Download Processed File",
+                data=f,
+                file_name=output_filename
+            )
