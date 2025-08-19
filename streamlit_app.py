@@ -8,7 +8,7 @@ st.write("Upload an Excel file and choose the transformation format.")
 
 # Select transformation format
 transformation_choice = st.selectbox("Select Transformation Format:", ["30010085 宏酒樽 (夜)", "30010203 宏酒樽 (日)", "30010061 向日葵", "30010010 酒倉盛豐行", "30010013 酒田", "30010059 誠邦有限公司", "30010315 圳程", "30030088 九久", "30020145 鏵錡", "30010199 振泰 OFF", "30010176 振泰 ON", "30030094 和易 ON", "33001422 和易 OFF"
-                                                                      , "30010017 正興(振興)", "30010031 廣茂隆(八條)", "30020016 日嵩", "30020027 榮好(實儀)"])
+                                                                      , "30010017 正興(振興)", "30010031 廣茂隆(八條)", "30020016 日嵩", "30020027 榮好(實儀)", "30020180 暐倫 OFF"])
 
 if transformation_choice == "30010085 宏酒樽 (夜)":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="new_raw")
@@ -1979,3 +1979,150 @@ elif transformation_choice == "30020027 榮好(實儀)":
                 file_name=output_filename
             )
 
+elif transformation_choice == "30020180 暐倫 OFF":
+    import re
+    import pandas as pd
+    import streamlit as st
+
+    raw_data_file = st.file_uploader("Upload Raw Sales Data (.xlsx)", type=["xlsx"], key="weilen_off_raw")
+    mapping_file  = st.file_uploader("Upload Mapping File (.xlsx)", type=["xlsx"], key="weilen_off_mapping")
+
+    if raw_data_file is not None and mapping_file is not None:
+        # ---------- 1) Load raw (first row is header) ----------
+        xls = pd.ExcelFile(raw_data_file)
+        sheet = xls.sheet_names[0]  # e.g., '工作表1'
+        df_raw = pd.read_excel(raw_data_file, sheet_name=sheet, header=None)
+        df_raw.columns = df_raw.iloc[0]
+        df = df_raw.iloc[1:].reset_index(drop=True)
+
+        # Standardize expected columns (defensive rename)
+        rename = {
+            "銷貨單號": "DocumentNo",
+            "銷貨日期": "DateRaw",
+            "客戶代號": "CustomerCode",
+            "客戶名稱": "CustomerName",
+            "產品編號": "ProductCode",
+            "產品名稱": "ProductName",
+            "數量":    "Quantity",
+        }
+        df = df.rename(columns=rename)
+
+        # Keep only needed columns if they exist
+        cols_needed = ["DateRaw","CustomerCode","CustomerName","ProductCode","ProductName","Quantity"]
+        df = df[[c for c in cols_needed if c in df.columns]].copy()
+
+        # ---------- 2) Date → YYYYMMDD ----------
+        def to_yyyymmdd(x):
+            # try pandas first (handles Excel serials, datetime, strings)
+            try:
+                return pd.to_datetime(x).strftime("%Y%m%d")
+            except Exception:
+                s = str(x)
+                m = re.search(r"(\d{4})[/-](\d{2})[/-](\d{2})", s)
+                if m:
+                    return f"{m.group(1)}{m.group(2)}{m.group(3)}"
+                return None
+
+        df["Date"] = df["DateRaw"].apply(to_yyyymmdd) if "DateRaw" in df.columns else None
+
+        # ---------- 3) Quantity → int; keep only non-zero ----------
+        df["Quantity"] = pd.to_numeric(df.get("Quantity", 0), errors="coerce").fillna(0).astype(int)
+        df = df[df["Quantity"] != 0].copy()
+
+        # ---------- 4) Normalize keys ----------
+        def norm_cust(s: str) -> str:
+            s = str(s).strip()
+            s = re.sub(r"\.0$", "", s)
+            return s
+
+        def norm_sku(s: str) -> str:
+            return str(s).strip().upper()
+
+        df["CustomerCode_norm"] = df.get("CustomerCode", "").apply(norm_cust)
+        df["ProductCode_norm"]  = df.get("ProductCode", "").apply(norm_sku)
+
+        # ---------- 5) Load mappings ----------
+        cust_map = pd.read_excel(mapping_file, sheet_name="Customer Mapping", dtype=str)
+        sku_map  = pd.read_excel(mapping_file, sheet_name="SKU Mapping", dtype=str)
+
+        # Prefer mappings filtered to this wholesaler; fallback to global
+        cust_f = cust_map[cust_map["ASI_CRM_Mapping_Cust_No__c"].astype(str).str.replace(r"\.0$", "", regex=True) == "30020180"].copy()
+        sku_f  = sku_map[ sku_map["ASI_CRM_Mapping_Cust_Code__c"].astype(str).str.replace(r"\.0$", "", regex=True) == "30020180"].copy()
+
+        def prep_cust(dfm: pd.DataFrame) -> pd.DataFrame:
+            out = dfm.copy()
+            out["key"] = (
+                out["ASI_CRM_Offtake_Customer_No__c"]
+                .astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+            )
+            out["val"] = out["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.strip()
+            return out[["key","val"]]
+
+        def prep_sku(dfm: pd.DataFrame) -> pd.DataFrame:
+            out = dfm.copy()
+            out["key"] = (
+                out["ASI_CRM_Offtake_Product__c"]
+                .astype(str).str.strip().str.upper()
+            )
+            out["val"] = out["ASI_CRM_SKU_Code__c"].astype(str).str.strip()
+            return out[["key","val"]]
+
+        # keep only one-to-one keys to avoid fan-out duplicates
+        def unique_only(kv: pd.DataFrame) -> pd.DataFrame:
+            g = kv.groupby("key")["val"].nunique().reset_index(name="n")
+            uniq = g[g["n"] == 1]["key"]
+            return kv[kv["key"].isin(uniq)].drop_duplicates(subset=["key"], keep="first")
+
+        cust_f_kv    = unique_only(prep_cust(cust_f))
+        cust_all_kv  = unique_only(prep_cust(cust_map))
+        sku_f_kv     = unique_only(prep_sku(sku_f))
+        sku_all_kv   = unique_only(prep_sku(sku_map))
+
+        cust_f_dict   = dict(zip(cust_f_kv["key"],   cust_f_kv["val"]))
+        cust_all_dict = dict(zip(cust_all_kv["key"], cust_all_kv["val"]))
+        sku_f_dict    = dict(zip(sku_f_kv["key"],    sku_f_kv["val"]))
+        sku_all_dict  = dict(zip(sku_all_kv["key"],  sku_all_kv["val"]))
+
+        # ---------- 6) Apply mapping (non-forced, unique-only) ----------
+        jde_from_filtered = df["CustomerCode_norm"].map(cust_f_dict)
+        jde_from_global   = df["CustomerCode_norm"].map(cust_all_dict)
+        df["CustomerCode_final"] = (
+            jde_from_filtered.fillna(jde_from_global).fillna(df["CustomerCode_norm"])
+            .astype(str).str.replace(r"\.0$", "", regex=True)
+        )
+
+        prt_from_filtered = df["ProductCode_norm"].map(sku_f_dict)
+        prt_from_global   = df["ProductCode_norm"].map(sku_all_dict)
+        df["PRT_Product_Code"] = prt_from_filtered.fillna(prt_from_global)  # leave NaN if still missing
+
+        # ---------- 7) Assemble final ordered frame ----------
+        df_final = pd.DataFrame({
+            "Type": "INV",
+            "Action": "U",
+            "GroupCode": "30020180",
+            "GroupName": "暐倫 OFF",
+            "CustomerCode": df["CustomerCode_final"],
+            "CustomerName": df.get("CustomerName", ""),
+            "Date": df["Date"],
+            "PRT_Product_Code": df["PRT_Product_Code"],
+            "ProductCode": df["ProductCode_norm"],
+            "ProductName": df.get("ProductName", ""),
+            "Quantity": df["Quantity"],
+        })
+
+        # ---------- 8) De-duplicate exact duplicates ----------
+        dedup_keys = ["GroupCode","CustomerCode","Date","ProductCode","Quantity"]
+        df_final = df_final.drop_duplicates(subset=dedup_keys, keep="first").reset_index(drop=True)
+
+        # ---------- 9) Preview & export (no headers / no index) ----------
+        st.write("✅ Processed Data Preview:")
+        st.dataframe(df_final)
+
+        output_filename = "30020180 transformation.xlsx"
+        df_final.to_excel(output_filename, index=False, header=False)
+        with open(output_filename, "rb") as f:
+            st.download_button(
+                label="📥 Download Processed File",
+                data=f,
+                file_name=output_filename
+            )
