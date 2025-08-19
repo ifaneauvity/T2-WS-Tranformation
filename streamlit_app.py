@@ -2332,32 +2332,25 @@ elif transformation_choice == "30020216 久悅貿易":
     mapping_file  = st.file_uploader("Upload Mapping File (.xlsx)", type=["xlsx"], key="jiuyue_mapping")
 
     if raw_data_file is not None and mapping_file is not None:
-        # ---------- 1) Load target sheet (pick the first YYYYMM-like sheet if present) ----------
+        # ---------- 1) Pick a YYYYMM sheet if present ----------
         xls = pd.ExcelFile(raw_data_file)
         month_like = [s for s in xls.sheet_names if re.fullmatch(r"\d{6}", s)]
         sheet = month_like[0] if month_like else xls.sheet_names[0]
         df_raw = pd.read_excel(raw_data_file, sheet_name=sheet, header=None)
 
-        # ---------- 2) Parse blocks ----------
-        records = []
-        current_cust_code = None
-        current_cust_name = None
-        current_date = None
-
+        # ---------- 2) Helpers ----------
         def minguo_to_yyyymmdd(s):
             if pd.isna(s): 
                 return None
             try:
                 y, m, d = str(s).strip().split("/")
                 y, m, d = int(y), int(m), int(d)
-                if y < 1911: 
-                    y += 1911
+                if y < 1911: y += 1911
                 return f"{y:04d}{m:02d}{d:02d}"
             except Exception:
                 return None
 
         def parse_customer(line: str):
-            # Clean zero-width chars, normalize spacing
             s = re.sub(r'[\u200b\ufeff]', '', line)
             s = re.sub(r'\s+', ' ', s)
             m = re.search(r'客戶簡稱[:：]\s*([A-Z0-9\-]+)\s+(.+?)(?:\s+電\s*話|$)', s)
@@ -2373,13 +2366,19 @@ elif transformation_choice == "30020216 久悅貿易":
                     return tail
             return ""
 
+        # ---------- 3) Extract rows ----------
+        records = []
+        current_cust_code = None
+        current_cust_name = None
+        current_date = None
+
         for i in range(len(df_raw)):
             c0 = df_raw.iat[i, 0]
-            c1 = df_raw.iat[i, 1] if df_raw.shape[1] > 1 else None
-            c2 = df_raw.iat[i, 2] if df_raw.shape[1] > 2 else None
-            c3 = df_raw.iat[i, 3] if df_raw.shape[1] > 3 else None
+            c1 = df_raw.iat[i, 1] if df_raw.shape[1] > 1 else None   # ← Document No
+            c2 = df_raw.iat[i, 2] if df_raw.shape[1] > 2 else None   # Name
+            c3 = df_raw.iat[i, 3] if df_raw.shape[1] > 3 else None   # Qty
 
-            # New customer block line
+            # New customer block
             if isinstance(c0, str) and c0.strip().startswith("客戶簡稱"):
                 code, name = parse_customer(c0)
                 if code:
@@ -2387,23 +2386,25 @@ elif transformation_choice == "30020216 久悅貿易":
                     current_cust_name = name
                 continue
 
-            # Skip header/total lines
+            # Skip headers/totals
             if str(c0).strip() in ["單據日期", "合    計：", "合計", "合    計:"]:
                 continue
 
-            # Date line (Minguo)
+            # Date line
             if isinstance(c0, str) and re.match(r"^\d{3}/\d{2}/\d{2}$", c0.strip()):
                 current_date = minguo_to_yyyymmdd(c0.strip())
 
-            # Product rows: name in col2, quantity in col3
+            # Product rows: robust qty parse (handles "3.00" strings)
             prod_name = c2 if isinstance(c2, str) else (str(c2) if pd.notna(c2) else None)
-            if prod_name and isinstance(c3, (int, float)):
-                qty = int(c3)
+            qty = pd.to_numeric(c3, errors="coerce")
+            if prod_name and pd.notna(qty):
+                qty = int(float(qty))
                 if qty == 0:
                     continue
                 prod_code = last_code_token(prod_name)
                 records.append({
-                    "CustomerCode": current_cust_code,
+                    "DocumentNo": c1,                         # NEW
+                    "CustomerCode_ext": current_cust_code,    # keep external for de-dup only
                     "CustomerName": current_cust_name,
                     "Date": current_date,
                     "ProductCode": prod_code,
@@ -2417,7 +2418,7 @@ elif transformation_choice == "30020216 久悅貿易":
 
         df_rec = pd.DataFrame(records)
 
-        # ---------- 3) Normalize keys ----------
+        # ---------- 4) Normalize keys ----------
         def norm_cust(s: str) -> str:
             s = str(s).strip().upper().replace(" ", "")
             return re.sub(r"\.0$", "", s)
@@ -2425,10 +2426,10 @@ elif transformation_choice == "30020216 久悅貿易":
         def norm_sku(s: str) -> str:
             return str(s).strip().upper()
 
-        df_rec["CustomerCode_norm"] = df_rec["CustomerCode"].apply(norm_cust)
+        df_rec["CustomerCode_norm"] = df_rec["CustomerCode_ext"].apply(norm_cust)
         df_rec["ProductCode_norm"]  = df_rec["ProductCode"].apply(norm_sku)
 
-        # ---------- 4) Load mappings (unique-only, prefer filtered then global) ----------
+        # ---------- 5) Load mappings (unique-only; prefer filtered, then global) ----------
         cust_map = pd.read_excel(mapping_file, sheet_name="Customer Mapping", dtype=str)
         sku_map  = pd.read_excel(mapping_file, sheet_name="SKU Mapping", dtype=str)
 
@@ -2459,8 +2460,8 @@ elif transformation_choice == "30020216 久悅貿易":
         sku_f_dict    = dict(zip(unique_only(prep_sku(sku_f))["key"],     unique_only(prep_sku(sku_f))["val"]))
         sku_all_dict  = dict(zip(unique_only(prep_sku(sku_map))["key"],   unique_only(prep_sku(sku_map))["val"]))
 
-        # ---------- 5) Apply mapping
-        # NOTE: per your instruction, if no customer mapping => leave blank (do NOT keep external code)
+        # ---------- 6) Apply mapping
+        # Leave CustomerCode BLANK when unmapped (per your requirement)
         # ----------
         jde_from_filtered = df_rec["CustomerCode_norm"].map(cust_f_dict)
         jde_from_global   = df_rec["CustomerCode_norm"].map(cust_all_dict)
@@ -2468,31 +2469,40 @@ elif transformation_choice == "30020216 久悅貿易":
 
         prt_from_filtered = df_rec["ProductCode_norm"].map(sku_f_dict)
         prt_from_global   = df_rec["ProductCode_norm"].map(sku_all_dict)
-        df_rec["PRT_Product_Code"] = prt_from_filtered.fillna(prt_from_global)  # keep NaN if missing
+        df_rec["PRT_Product_Code"] = prt_from_filtered.fillna(prt_from_global)  # may stay NaN
 
-        # ---------- 6) Assemble final, de-dup ----------
+        # ---------- 7) Build output ----------
         df_final = pd.DataFrame({
             "Type": "INV",
             "Action": "U",
             "GroupCode": "30020216",
             "GroupName": "久悅貿易",
-            "CustomerCode": df_rec["CustomerCode_final"],
+            "CustomerCode": df_rec["CustomerCode_final"],          # blank if unmapped
             "CustomerName": df_rec["CustomerName"],
             "Date": df_rec["Date"],
             "PRT_Product_Code": df_rec["PRT_Product_Code"],
             "ProductCode": df_rec["ProductCode_norm"],
             "ProductName": df_rec["ProductName"],
-            "Quantity": df_rec["Quantity"].astype(int)
+            "Quantity": df_rec["Quantity"].astype(int),
+            "DocumentNo": df_rec["DocumentNo"],                    # helper (not exported)
+            "_custKey": df_rec["CustomerCode_final"].mask(
+                df_rec["CustomerCode_final"].eq(""), df_rec["CustomerCode_norm"]
+            ),  # use external code only for de-dup key
         })
 
-        dedup_keys = ["GroupCode","CustomerCode","Date","ProductCode","Quantity"]
+        # ---------- 8) De-dup: keep distinct lines (uses doc no + product name + custKey) ----------
+        dedup_keys = ["GroupCode","_custKey","Date","ProductCode","ProductName","Quantity","DocumentNo"]
         df_final = df_final.drop_duplicates(subset=dedup_keys, keep="first").reset_index(drop=True)
 
-        # ---------- 7) Preview + Export (no headers / no index) ----------
+        # drop helper columns from export
+        df_export = df_final.drop(columns=["DocumentNo","_custKey"])
+
+        # ---------- 9) Preview + Export (no headers / no index) ----------
         st.write("✅ Processed Data Preview:")
-        st.dataframe(df_final)
+        st.dataframe(df_export)
 
         output_filename = "30020216 transformation.xlsx"
-        df_final.to_excel(output_filename, index=False, header=False)
+        df_export.to_excel(output_filename, index=False, header=False)
         with open(output_filename, "rb") as f:
             st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
+
