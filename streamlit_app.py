@@ -8,7 +8,7 @@ st.write("Upload an Excel file and choose the transformation format.")
 
 # Select transformation format
 transformation_choice = st.selectbox("Select Transformation Format:", ["30010085 宏酒樽 (夜)", "30010203 宏酒樽 (日)", "30010061 向日葵", "30010010 酒倉盛豐行", "30010013 酒田", "30010059 誠邦有限公司", "30010315 圳程", "30030088 九久", "30020145 鏵錡", "30010199 振泰 OFF", "30010176 振泰 ON", "30030094 和易 ON", "33001422 和易 OFF"
-                                                                      , "30010017 正興(振興)"])
+                                                                      , "30010017 正興(振興)", "30010031 廣茂隆(八條)"])
 
 if transformation_choice == "30010085 宏酒樽 (夜)":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="new_raw")
@@ -1593,4 +1593,113 @@ elif transformation_choice == "30010017 正興(振興)":
                 file_name=output_filename
             )
 
+elif transformation_choice == "30010031 廣茂隆(八條)":
+    import re
+    import pandas as pd
+    import streamlit as st
+
+    raw_data_file = st.file_uploader("Upload Raw Sales Data (.xlsx)", type=["xlsx"], key="gml_raw")
+    mapping_file  = st.file_uploader("Upload Mapping File (.xlsx)", type=["xlsx"], key="gml_mapping")
+
+    if raw_data_file is not None and mapping_file is not None:
+        # ---- Load raw (single sheet like '0728-0731') ----
+        xls = pd.ExcelFile(raw_data_file)
+        sheet_name = xls.sheet_names[0]
+        df_raw = pd.read_excel(raw_data_file, sheet_name=sheet_name, header=None)
+
+        # First row is header row
+        df_raw.columns = df_raw.iloc[0]
+        df_raw = df_raw.iloc[1:].reset_index(drop=True)
+
+        # Standardize columns
+        rename_map = {"客戶": "CustomerCode", "客戶名稱": "CustomerName",
+                      "品號": "ProductCode", "品名規格": "ProductName", "銷量": "Quantity"}
+        df = df_raw.rename(columns=rename_map)[["CustomerCode","CustomerName","ProductCode","ProductName","Quantity"]]
+
+        # Quantity -> int, drop zeros
+        def to_int(x):
+            try:
+                if pd.isna(x): return 0
+                return int(float(str(x).strip()))
+            except:
+                return 0
+
+        df["Quantity"] = df["Quantity"].apply(to_int)
+        df = df[df["Quantity"] != 0].copy()
+
+        # Normalize codes to strings (strip possible .0)
+        for col in ["CustomerCode","ProductCode"]:
+            df[col] = df[col].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+
+        # ---- Date from sheet name: e.g. '0728-0731' -> use end date '0731' -> default year 2025 ----
+        m = re.match(r"^(\d{2})(\d{2})-(\d{2})(\d{2})$", sheet_name)
+        if m:
+            mm_end, dd_end = m.group(3), m.group(4)
+            year = "2025"  # adjust if you want a parameterized year
+            date_val = f"{year}{mm_end}{dd_end}"
+        else:
+            # fallback: keep blank if the sheet name isn’t in the expected pattern
+            date_val = None
+        df["Date"] = date_val
+
+        # ---- Load mappings (dtype=str), FILTERED to this wholesaler (30010031) ----
+        cust_map = pd.read_excel(mapping_file, sheet_name="Customer Mapping", dtype=str)
+        sku_map  = pd.read_excel(mapping_file, sheet_name="SKU Mapping", dtype=str)
+
+        cust_map = cust_map[
+            cust_map["ASI_CRM_Mapping_Cust_No__c"].astype(str).str.replace(r"\.0$", "", regex=True) == "30010031"
+        ].copy()
+        sku_map = sku_map[
+            sku_map["ASI_CRM_Mapping_Cust_Code__c"].astype(str).str.replace(r"\.0$", "", regex=True) == "30010031"
+        ].copy()
+
+        cust_map["ASI_CRM_Offtake_Customer_No__c"] = cust_map["ASI_CRM_Offtake_Customer_No__c"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+        sku_map["ASI_CRM_Offtake_Product__c"] = sku_map["ASI_CRM_Offtake_Product__c"].astype(str).str.strip()
+
+        # ---- Customer mapping (non-forced): use JDE when present, else keep original ----
+        df = df.merge(
+            cust_map[["ASI_CRM_Offtake_Customer_No__c","ASI_CRM_JDE_Cust_No_Formula__c"]],
+            left_on="CustomerCode", right_on="ASI_CRM_Offtake_Customer_No__c", how="left"
+        )
+        df["CustomerCode"] = df["ASI_CRM_JDE_Cust_No_Formula__c"].where(
+            df["ASI_CRM_JDE_Cust_No_Formula__c"].notna(), df["CustomerCode"]
+        ).astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+        df.drop(columns=["ASI_CRM_Offtake_Customer_No__c","ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
+
+        # ---- SKU mapping (non-forced): fill PRT SKU when present, else leave NaN ----
+        df = df.merge(
+            sku_map[["ASI_CRM_Offtake_Product__c","ASI_CRM_SKU_Code__c"]],
+            left_on="ProductCode", right_on="ASI_CRM_Offtake_Product__c", how="left"
+        )
+        df["PRT_Product_Code"] = df["ASI_CRM_SKU_Code__c"]
+        df.drop(columns=["ASI_CRM_Offtake_Product__c","ASI_CRM_SKU_Code__c"], inplace=True)
+
+        # ---- Add metadata columns and order ----
+        df.insert(0, "Type", "INV")
+        df.insert(1, "Action", "U")
+        df.insert(2, "GroupCode", "30010031")
+        df.insert(3, "GroupName", "廣茂隆(八條)")
+
+        df_final = df[[
+            "Type","Action","GroupCode","GroupName",
+            "CustomerCode","CustomerName","Date",
+            "PRT_Product_Code","ProductCode","ProductName","Quantity"
+        ]].copy()
+
+        # ---- De-duplicate exact duplicates ----
+        dedup_keys = ["GroupCode","CustomerCode","Date","ProductCode","Quantity"]
+        df_final = df_final.drop_duplicates(subset=dedup_keys, keep="first").reset_index(drop=True)
+
+        # ---- Preview + Export (NO headers, NO index) ----
+        st.write("✅ Processed Data Preview:")
+        st.dataframe(df_final)
+
+        output_filename = "30010031 transformation.xlsx"
+        df_final.to_excel(output_filename, index=False, header=False)
+        with open(output_filename, "rb") as f:
+            st.download_button(
+                label="📥 Download Processed File",
+                data=f,
+                file_name=output_filename
+            )
 
