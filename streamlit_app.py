@@ -1463,8 +1463,8 @@ elif transformation_choice == "33001422 和易 OFF":
             st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
 
 elif transformation_choice == "30010017 正興(振興)":
-    import pandas as pd
     import re
+    import pandas as pd
     import streamlit as st
 
     raw_data_file = st.file_uploader("Upload Raw Sales Data (.xlsx)", type=["xlsx"], key="zhengxing_raw")
@@ -1527,64 +1527,70 @@ elif transformation_choice == "30010017 正興(振興)":
 
                 records.append([
                     "INV", "U", "30010017", "正興(振興)",
-                    c0, c1, doc_date, "", current_product_code, current_product_name, qty
+                    c0, c1, doc_date, None,                 # PRT_Product_Code (None if unmapped)
+                    current_product_code, current_product_name, qty
                 ])
 
-        # If nothing parsed, show hint
         if not records:
-            st.warning("No transactional rows were parsed. Please check the sheet layout or share a sample for debugging.")
-        else:
-            df_parsed = pd.DataFrame(records, columns=[
-                "Type","Action","GroupCode","GroupName",
-                "CustomerCode","CustomerName","Date",
-                "PRT_Product_Code","ProductCode","ProductName","Quantity"
-            ])
+            st.warning("No transactional rows were parsed. Please verify the sheet layout.")
+            st.stop()
 
-            # --- Load mappings ---
-            dfs_mapping = {
-                sheet: pd.read_excel(mapping_file, sheet_name=sheet, dtype=str)
-                for sheet in pd.ExcelFile(mapping_file).sheet_names
-            }
+        df_parsed = pd.DataFrame(records, columns=[
+            "Type","Action","GroupCode","GroupName",
+            "CustomerCode","CustomerName","Date",
+            "PRT_Product_Code","ProductCode","ProductName","Quantity"
+        ])
 
-            # Customer mapping
-            cust_map = dfs_mapping["Customer Mapping"].copy()
-            cust_map["ASI_CRM_Offtake_Customer_No__c"] = cust_map["ASI_CRM_Offtake_Customer_No__c"].astype(str).str.strip()
-            # Join & replace with JDE code (strip trailing .0)
-            df_parsed = df_parsed.merge(
-                cust_map[["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"]],
-                left_on="CustomerCode", right_on="ASI_CRM_Offtake_Customer_No__c", how="left"
+        # --- Load mappings (do not force replacements) ---
+        xls_map = pd.ExcelFile(mapping_file)
+        cust_map = pd.read_excel(mapping_file, sheet_name="Customer Mapping", dtype=str)
+        sku_map  = pd.read_excel(mapping_file, sheet_name="SKU Mapping", dtype=str)
+
+        cust_map["ASI_CRM_Offtake_Customer_No__c"] = cust_map["ASI_CRM_Offtake_Customer_No__c"].astype(str).str.strip()
+        sku_map["ASI_CRM_Offtake_Product__c"] = sku_map["ASI_CRM_Offtake_Product__c"].astype(str).str.strip()
+
+        # Customer mapping: replace with JDE when available; otherwise keep original (do NOT drop rows)
+        df_parsed = df_parsed.merge(
+            cust_map[["ASI_CRM_Offtake_Customer_No__c","ASI_CRM_JDE_Cust_No_Formula__c"]],
+            left_on="CustomerCode", right_on="ASI_CRM_Offtake_Customer_No__c", how="left"
+        )
+        # use mapped JDE when present; else keep existing raw code
+        df_parsed["CustomerCode"] = df_parsed["ASI_CRM_JDE_Cust_No_Formula__c"].where(
+            df_parsed["ASI_CRM_JDE_Cust_No_Formula__c"].notna(),
+            df_parsed["CustomerCode"]
+        ).astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+        df_parsed.drop(columns=["ASI_CRM_Offtake_Customer_No__c","ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
+
+        # SKU mapping: fill PRT_Product_Code when available; else leave as NaN (do NOT force)
+        df_parsed = df_parsed.merge(
+            sku_map[["ASI_CRM_Offtake_Product__c","ASI_CRM_SKU_Code__c"]],
+            left_on="ProductCode", right_on="ASI_CRM_Offtake_Product__c", how="left"
+        )
+        df_parsed["PRT_Product_Code"] = df_parsed["ASI_CRM_SKU_Code__c"]
+        df_parsed.drop(columns=["ASI_CRM_Offtake_Product__c","ASI_CRM_SKU_Code__c"], inplace=True)
+
+        # --- De-duplicate exact duplicates (keep first) ---
+        dedup_keys = ["GroupCode","CustomerCode","Date","ProductCode","Quantity"]
+        df_final = df_parsed.drop_duplicates(subset=dedup_keys, keep="first").reset_index(drop=True)
+
+        # Final order (no headers / no index on export)
+        df_final = df_final[[
+            "Type","Action","GroupCode","GroupName",
+            "CustomerCode","CustomerName","Date",
+            "PRT_Product_Code","ProductCode","ProductName","Quantity"
+        ]]
+
+        st.write("✅ Processed Data Preview:")
+        st.dataframe(df_final)
+
+        # Export: no headers, no index
+        output_filename = "30010017 transformation.xlsx"
+        df_final.to_excel(output_filename, index=False, header=False)
+        with open(output_filename, "rb") as f:
+            st.download_button(
+                label="📥 Download Processed File",
+                data=f,
+                file_name=output_filename
             )
-            df_parsed["CustomerCode"] = df_parsed["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True).fillna(df_parsed["CustomerCode"])
-            df_parsed.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
 
-            # SKU mapping
-            sku_map = dfs_mapping["SKU Mapping"].copy()
-            sku_map["ASI_CRM_Offtake_Product__c"] = sku_map["ASI_CRM_Offtake_Product__c"].astype(str).str.strip()
-            df_parsed = df_parsed.merge(
-                sku_map[["ASI_CRM_Offtake_Product__c","ASI_CRM_SKU_Code__c"]],
-                left_on="ProductCode", right_on="ASI_CRM_Offtake_Product__c", how="left"
-            )
-            df_parsed["PRT_Product_Code"] = df_parsed["ASI_CRM_SKU_Code__c"].astype(str).str.strip().fillna(df_parsed["PRT_Product_Code"])
-            df_parsed.drop(columns=["ASI_CRM_Offtake_Product__c","ASI_CRM_SKU_Code__c"], inplace=True)
-
-            # Final order (no headers export)
-            df_final = df_parsed[[
-                "Type","Action","GroupCode","GroupName",
-                "CustomerCode","CustomerName","Date",
-                "PRT_Product_Code","ProductCode","ProductName","Quantity"
-            ]]
-
-            # Preview
-            st.write("✅ Processed Data Preview:")
-            st.dataframe(df_final)
-
-            # Export
-            output_filename = "30010017 transformation.xlsx"
-            df_final.to_excel(output_filename, index=False, header=False)
-            with open(output_filename, "rb") as f:
-                st.download_button(
-                    label="📥 Download Processed File",
-                    data=f,
-                    file_name=output_filename
-                )
 
