@@ -2700,8 +2700,8 @@ elif transformation_choice == "30030076 裕陞（分月）":
     import pandas as pd
     import streamlit as st
 
-    raw_data_file = st.file_uploader("Upload Raw Sales Data (.xlsx)", type=["xlsx"], key="yusheng_monthly_raw")
-    mapping_file  = st.file_uploader("Upload Mapping File (.xlsx)", type=["xlsx"], key="yusheng_monthly_map")
+    raw_data_file = st.file_uploader("Upload Raw Sales Data (.xlsx)", type=["xlsx"], key="yusheng_monthly_raw_v2")
+    mapping_file  = st.file_uploader("Upload Mapping File (.xlsx)", type=["xlsx"], key="yusheng_monthly_map_v2")
 
     if raw_data_file is not None and mapping_file is not None:
         # ---------- Helpers ----------
@@ -2712,7 +2712,7 @@ elif transformation_choice == "30030076 裕陞（分月）":
         def norm_sku(s: str) -> str:
             return str(s).strip().upper()
 
-        # ---------- 1) Parse ALL sheets ----------
+        # ---------- 1) Parse ALL sheets with a state machine (handles multiple product blocks) ----------
         xls = pd.ExcelFile(raw_data_file)
         sheets = xls.sheet_names
 
@@ -2721,70 +2721,71 @@ elif transformation_choice == "30030076 裕陞（分月）":
             if df.empty:
                 return pd.DataFrame()
 
-            # Find header row: A=日期, B=銷貨單號, C=客戶編號, D=客戶簡稱
-            header_idx = None
-            for i in range(min(40, len(df))):
-                a = str(df.iat[i, 0]).strip() if pd.notna(df.iat[i, 0]) else ""
-                b = str(df.iat[i, 1]).strip() if pd.notna(df.iat[i, 1]) else ""
-                c = str(df.iat[i, 2]).strip() if pd.notna(df.iat[i, 2]) else ""
-                d = str(df.iat[i, 3]).strip() if pd.notna(df.iat[i, 3]) else ""
-                if a == "日期" and b == "銷貨單號" and c == "客戶編號" and d == "客戶簡稱":
-                    header_idx = i
-                    break
-            if header_idx is None:
-                return pd.DataFrame()
+            records = []
+            current_prod_code, current_prod_name = "", ""
+            in_table = False  # inside a 日期/銷貨單號/客戶編號/客戶簡稱 grid for the current product
 
-            # Search a few rows ABOVE header for product line:
-            # pattern 1: col0 = 6+ digits, col1 = name
-            # pattern 2: col0 = "<digits> <name>"
-            prod_code, prod_name = "", ""
-            for r in range(header_idx - 1, max(-1, header_idx - 9), -1):
-                c0 = df.iat[r, 0] if r >= 0 else None
-                c1 = df.iat[r, 1] if (r >= 0 and df.shape[1] > 1) else None
-                s0 = str(c0).strip() if pd.notna(c0) else ""
-                s1 = str(c1).strip() if pd.notna(c1) else ""
-                if re.fullmatch(r"\d{6,}", s0) and s1:
-                    prod_code, prod_name = s0, s1
-                    break
-                m = re.match(r"^\s*(\d{6,})\s+(.+)$", s0)
-                if m and ":" not in s0 and "/" not in s0:
-                    prod_code, prod_name = m.group(1).strip(), m.group(2).strip()
+            # quick helper for safe string cell read
+            def sval(r, c):
+                return str(df.iat[r, c]).strip() if (df.shape[1] > c and pd.notna(df.iat[r, c])) else ""
+
+            for r in range(len(df)):
+                s0, s1, s2, s3 = sval(r, 0), sval(r, 1), sval(r, 2), sval(r, 3)
+
+                # stop at footer if any column mentions 列印日期
+                if any(("列印日期" in sval(r, c)) for c in range(min(10, df.shape[1]))):
+                    # continue scanning next product sections on the same sheet would be uncommon after footer; break is safe
                     break
 
-            rows = []
-            for r in range(header_idx + 1, len(df)):
-                a = df.iat[r, 0]
-                if isinstance(a, str) and ("列印日期" in a or "列印" in a):
-                    break
+                # --- PRODUCT HEADER variants ---
+                #   A) "123456 名稱" inline in column A
+                #   B) column A is digits (6+), column B is the name
+                m_inline = re.match(r"^\s*(\d{6,})\s+(.+)$", s0)
+                if (re.fullmatch(r"\d{6,}", s0) and s1 and ":" not in s0 and "/" not in s0) or m_inline:
+                    if m_inline:
+                        current_prod_code, current_prod_name = m_inline.group(1).strip(), m_inline.group(2).strip()
+                    else:
+                        current_prod_code, current_prod_name = s0, s1
+                    in_table = False  # wait for the next grid header under this product block
+                    continue
 
+                # --- GRID HEADER for details ---
+                if s0 == "日期" and s1 == "銷貨單號" and s2 == "客戶編號" and s3 == "客戶簡稱":
+                    in_table = True
+                    continue
+
+                # not in a table yet, or we don't have a product context
+                if not in_table or not current_prod_code:
+                    continue
+
+                # --- DETAIL ROW under current product block ---
+                # Date in col A; DocumentNo col B; CustomerCode col C; CustomerName col D; Quantity col E
                 try:
-                    date_fmt = pd.to_datetime(a).strftime("%Y%m%d")
+                    date_fmt = pd.to_datetime(df.iat[r, 0]).strftime("%Y%m%d")
                 except Exception:
                     date_fmt = None
 
-                doc  = df.iat[r, 1]
-                cc   = df.iat[r, 2]
-                cname= df.iat[r, 3]
-                qty  = pd.to_numeric(df.iat[r, 4], errors="coerce")
+                qty = pd.to_numeric(df.iat[r, 4] if df.shape[1] > 4 else None, errors="coerce")
 
-                if pd.notna(qty) and qty != 0 and date_fmt:
-                    rows.append({
+                if date_fmt and pd.notna(qty) and float(qty) != 0:
+                    records.append({
                         "Date": date_fmt,
-                        "DocumentNo": str(doc).strip() if pd.notna(doc) else "",
-                        "CustomerCode_ext": str(cc).strip() if pd.notna(cc) else "",
-                        "CustomerName": str(cname).strip() if pd.notna(cname) else "",
-                        "ProductCode": prod_code,
-                        "ProductName": prod_name,
-                        "Quantity": int(float(qty))
+                        "DocumentNo": s1,
+                        "CustomerCode_ext": s2,
+                        "CustomerName": s3,
+                        "ProductCode": norm_sku(current_prod_code),
+                        "ProductName": current_prod_name,
+                        "Quantity": int(float(qty)),
                     })
-            return pd.DataFrame(rows)
+
+            return pd.DataFrame(records)
 
         df_all = pd.concat([d for d in (extract_sheet(s) for s in sheets) if not d.empty], ignore_index=True)
         if df_all.empty:
             st.warning("No valid rows found across sheets.")
             st.stop()
 
-        # Combine duplicates within the same document/customer/product/date
+        # Combine duplicates within the same document/customer/product/date (e.g., sales + free)
         group_keys = ["Date","DocumentNo","CustomerCode_ext","CustomerName","ProductCode","ProductName"]
         df_all = df_all.groupby(group_keys, as_index=False)["Quantity"].sum()
 
@@ -2819,7 +2820,7 @@ elif transformation_choice == "30030076 裕陞（分月）":
         sku_f_dict    = dict(zip(unique_only(prep_sku(sku_f))["key"],     unique_only(prep_sku(sku_f))["val"]))
         sku_all_dict  = dict(zip(unique_only(prep_sku(sku_map))["key"],   unique_only(prep_sku(sku_map))["val"]))
 
-        # Normalize and map
+        # Normalize + map
         df_all["CustomerCode_norm"] = df_all["CustomerCode_ext"].apply(norm_cust)
         df_all["ProductCode_norm"]  = df_all["ProductCode"].apply(norm_sku)
 
@@ -2843,7 +2844,7 @@ elif transformation_choice == "30030076 裕陞（分月）":
             "CustomerName": df_all["CustomerName"],
             "Date": df_all["Date"],
             "PRT_Product_Code": df_all["PRT_Product_Code"],
-            "ProductCode": df_all["ProductCode_norm"],
+            "ProductCode": df_all["ProductCode_norm"],        # ← now correctly changes per block
             "ProductName": df_all["ProductName"],
             "Quantity": df_all["Quantity"].astype(int),
             "DocumentNo": df_all["DocumentNo"],
@@ -2877,3 +2878,4 @@ elif transformation_choice == "30030076 裕陞（分月）":
         df_view.to_excel(out_name, index=False, header=False)
         with open(out_name, "rb") as f:
             st.download_button("📥 Download Selected Month", f, file_name=out_name)
+
