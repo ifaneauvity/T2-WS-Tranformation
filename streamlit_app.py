@@ -2700,11 +2700,12 @@ elif transformation_choice == "30030076 裕陞（分月）":
     import pandas as pd
     import streamlit as st
 
-    raw_data_file = st.file_uploader("Upload Raw Sales Data (.xlsx)", type=["xlsx"], key="yusheng_monthly_raw_v3")
-    mapping_file  = st.file_uploader("Upload Mapping File (.xlsx)", type=["xlsx"], key="yusheng_monthly_map_v3")
+    # ---- Inputs
+    raw_data_file = st.file_uploader("Upload Raw Sales Data (.xlsx)", type=["xlsx"], key="yusheng_raw_reset")
+    mapping_file  = st.file_uploader("Upload Mapping File (.xlsx)", type=["xlsx"], key="yusheng_map_reset")
 
     if raw_data_file is not None and mapping_file is not None:
-        # ---------- Helpers ----------
+        # ========= Helpers =========
         def norm_cust(s: str) -> str:
             s = str(s).strip().upper().replace(" ", "")
             return re.sub(r"\.0$", "", s)
@@ -2712,7 +2713,7 @@ elif transformation_choice == "30030076 裕陞（分月）":
         def norm_sku(s: str) -> str:
             return str(s).strip().upper()
 
-        # ---------- 1) Parse ALL sheets with a state machine (multi-product blocks per sheet) ----------
+        # ========= 1) Parse ALL SHEETS (state machine; supports many product blocks per sheet) =========
         xls = pd.ExcelFile(raw_data_file)
         sheets = xls.sheet_names
 
@@ -2721,9 +2722,9 @@ elif transformation_choice == "30030076 裕陞（分月）":
             if df.empty:
                 return pd.DataFrame()
 
-            records = []
+            recs = []
             current_prod_code, current_prod_name = "", ""
-            in_table = False  # inside 日期/銷貨單號/客戶編號/客戶簡稱 grid
+            in_table = False  # inside a 日期/銷貨單號/客戶編號/客戶簡稱 grid
 
             def sval(r, c):
                 return str(df.iat[r, c]).strip() if (df.shape[1] > c and pd.notna(df.iat[r, c])) else ""
@@ -2731,21 +2732,23 @@ elif transformation_choice == "30030076 裕陞（分月）":
             for r in range(len(df)):
                 s0, s1, s2, s3 = sval(r, 0), sval(r, 1), sval(r, 2), sval(r, 3)
 
-                # Footer guard (stop reading this sheet)
+                # stop on a footer row if it appears
                 if any(("列印日期" in sval(r, c)) for c in range(min(10, df.shape[1]))):
                     break
 
-                # PRODUCT HEADER variants
-                m_inline = re.match(r"^\s*(\d{6,})\s+(.+)$", s0)  # "123456 Name" in col A
+                # ---- Product header variants
+                # A) "123456 名稱" in col A
+                # B) col A is 6+ digits and col B is the name
+                m_inline = re.match(r"^\s*(\d{6,})\s+(.+)$", s0)
                 if (re.fullmatch(r"\d{6,}", s0) and s1 and ":" not in s0 and "/" not in s0) or m_inline:
                     if m_inline:
                         current_prod_code, current_prod_name = m_inline.group(1).strip(), m_inline.group(2).strip()
                     else:
                         current_prod_code, current_prod_name = s0, s1
-                    in_table = False  # wait for the next grid header
+                    in_table = False
                     continue
 
-                # GRID HEADER
+                # ---- Grid header
                 if s0 == "日期" and s1 == "銷貨單號" and s2 == "客戶編號" and s3 == "客戶簡稱":
                     in_table = True
                     continue
@@ -2753,7 +2756,8 @@ elif transformation_choice == "30030076 裕陞（分月）":
                 if not in_table or not current_prod_code:
                     continue
 
-                # DETAIL ROW
+                # ---- Detail line
+                # A: 日期 (Gregorian)  B: 單號  C: 客編  D: 客名  E: 數量
                 try:
                     date_fmt = pd.to_datetime(df.iat[r, 0]).strftime("%Y%m%d")
                 except Exception:
@@ -2762,7 +2766,7 @@ elif transformation_choice == "30030076 裕陞（分月）":
                 qty = pd.to_numeric(df.iat[r, 4] if df.shape[1] > 4 else None, errors="coerce")
 
                 if date_fmt and pd.notna(qty) and float(qty) != 0:
-                    records.append({
+                    recs.append({
                         "Date": date_fmt,
                         "DocumentNo": s1,
                         "CustomerCode_ext": s2,
@@ -2772,18 +2776,18 @@ elif transformation_choice == "30030076 裕陞（分月）":
                         "Quantity": int(float(qty)),
                     })
 
-            return pd.DataFrame(records)
+            return pd.DataFrame(recs)
 
         df_all = pd.concat([d for d in (extract_sheet(s) for s in sheets) if not d.empty], ignore_index=True)
         if df_all.empty:
             st.warning("No valid rows found across sheets.")
             st.stop()
 
-        # Combine possible duplicates within same doc/customer/product/date
+        # Sum duplicates within same document/customer/product/date (e.g., sales + free)
         group_keys = ["Date","DocumentNo","CustomerCode_ext","CustomerName","ProductCode","ProductName"]
         df_all = df_all.groupby(group_keys, as_index=False)["Quantity"].sum()
 
-        # ---------- 2) Mappings (unique-only; prefer filtered to 30030076, then global) ----------
+        # ========= 2) Mappings (unique-only; prefer filtered to 30030076, then global) =========
         cust_map = pd.read_excel(mapping_file, sheet_name="Customer Mapping", dtype=str)
         sku_map  = pd.read_excel(mapping_file, sheet_name="SKU Mapping", dtype=str)
 
@@ -2817,17 +2821,19 @@ elif transformation_choice == "30030076 裕陞（分月）":
         df_all["CustomerCode_norm"] = df_all["CustomerCode_ext"].apply(norm_cust)
         df_all["ProductCode_norm"]  = df_all["ProductCode"].apply(norm_sku)
 
-        jde_from_filtered = df_all["CustomerCode_norm"].map(cust_f_dict)
-        jde_from_global   = df_all["CustomerCode_norm"].map(cust_all_dict)
-        # Leave blank if unmapped (do NOT keep external)
-        df_all["CustomerCode_final"] = jde_from_filtered.combine_first(jde_from_global).fillna("")
+        # Customer: leave blank when unmapped (do NOT keep external code)
+        jde_filtered = df_all["CustomerCode_norm"].map(cust_f_dict)
+        jde_global   = df_all["CustomerCode_norm"].map(cust_all_dict)
+        df_all["CustomerCode_final"] = jde_filtered.combine_first(jde_global).fillna("")
 
-        prt_from_filtered = df_all["ProductCode_norm"].map(sku_f_dict)
-        prt_from_global   = df_all["ProductCode_norm"].map(sku_all_dict)
-        df_all["PRT_Product_Code"]   = prt_from_filtered.fillna(prt_from_global)
+        # SKU mapping (may remain blank)
+        prt_filtered = df_all["ProductCode_norm"].map(sku_f_dict)
+        prt_global   = df_all["ProductCode_norm"].map(sku_all_dict)
+        df_all["PRT_Product_Code"]   = prt_filtered.fillna(prt_global)
 
-        # ---------- 3) Assemble final + Month key ----------
+        # ========= 3) Assemble output + month key =========
         df_all["Month"] = df_all["Date"].astype(str).str[:6]
+
         df_final = pd.DataFrame({
             "Type": "INV",
             "Action": "U",
@@ -2844,21 +2850,18 @@ elif transformation_choice == "30030076 裕陞（分月）":
             "Month": df_all["Month"],
         })
 
-        # Conservative de-dup (keep doc number)
+        # De-dup (conservative: keep DocumentNo to avoid collapsing distinct rows)
         dedup_keys = ["DocumentNo","CustomerCode","Date","ProductCode","ProductName","Quantity"]
-        df_all_final = df_final.drop_duplicates(subset=dedup_keys, keep="first").reset_index(drop=True)
+        df_final = df_final.drop_duplicates(subset=dedup_keys, keep="first").reset_index(drop=True)
 
-        # ---------- 4) UI: MULTI-SELECT months + Export ----------
-        available_months = sorted(df_all_final["Month"].dropna().astype(str).unique().tolist())
-        selected_months = st.multiselect("📅 Select month(s) to view/export:", available_months, default=available_months)
+        # ========= 4) Multi-month selector + export =========
+        months = sorted(df_final["Month"].dropna().astype(str).unique().tolist())
+        default_sel = months  # show all by default
+        selected_months = st.multiselect("📅 Select month(s) to view/export:", months, default=default_sel)
 
-        if selected_months:
-            df_view = df_all_final[df_all_final["Month"].isin(selected_months)].copy()
-        else:
-            # If user deselects everything, show nothing (but keep columns)
-            df_view = df_all_final.head(0).copy()
+        df_view = df_final[df_final["Month"].isin(selected_months)].copy() if selected_months else df_final.head(0).copy()
 
-        # Drop helper Month from display/export (keep DocumentNo for safety)
+        # Drop helper "Month" from export; keep DocumentNo for safety
         df_view = df_view[[
             "Type","Action","GroupCode","GroupName",
             "CustomerCode","CustomerName","Date",
@@ -2868,8 +2871,8 @@ elif transformation_choice == "30030076 裕陞（分月）":
         st.write("✅ Processed Data Preview:")
         st.dataframe(df_view)
 
-        # Build a sensible filename tag
-        if not selected_months or len(selected_months) == len(available_months):
+        # Filename
+        if not selected_months or len(selected_months) == len(months):
             tag = "all_months"
         elif len(selected_months) <= 4:
             tag = "_".join(selected_months)
@@ -2880,5 +2883,6 @@ elif transformation_choice == "30030076 裕陞（分月）":
         df_view.to_excel(out_name, index=False, header=False)
         with open(out_name, "rb") as f:
             st.download_button("📥 Download Selected Month(s)", f, file_name=out_name)
+
 
 
