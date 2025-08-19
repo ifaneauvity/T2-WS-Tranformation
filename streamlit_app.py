@@ -8,7 +8,7 @@ st.write("Upload an Excel file and choose the transformation format.")
 
 # Select transformation format
 transformation_choice = st.selectbox("Select Transformation Format:", ["30010085 宏酒樽 (夜)", "30010203 宏酒樽 (日)", "30010061 向日葵", "30010010 酒倉盛豐行", "30010013 酒田", "30010059 誠邦有限公司", "30010315 圳程", "30030088 九久", "30020145 鏵錡", "30010199 振泰 OFF", "30010176 振泰 ON", "30030094 和易 ON", "33001422 和易 OFF"
-                                                                      , "30010017 正興"])
+                                                                      , "30010017 正興(振興)"])
 
 if transformation_choice == "30010085 宏酒樽 (夜)":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="new_raw")
