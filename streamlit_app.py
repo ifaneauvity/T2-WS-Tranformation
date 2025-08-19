@@ -7,7 +7,8 @@ st.title("📊 WS Transformation")
 st.write("Upload an Excel file and choose the transformation format.")
 
 # Select transformation format
-transformation_choice = st.selectbox("Select Transformation Format:", ["30010085 宏酒樽 (夜)", "30010203 宏酒樽 (日)", "30010061 向日葵", "30010010 酒倉盛豐行", "30010013 酒田", "30010059 誠邦有限公司", "30010315 圳程", "30030088 九久", "30020145 鏵錡", "30010199 振泰 OFF", "30010176 振泰 ON", "30030094 和易 ON", "33001422 和易 OFF"])
+transformation_choice = st.selectbox("Select Transformation Format:", ["30010085 宏酒樽 (夜)", "30010203 宏酒樽 (日)", "30010061 向日葵", "30010010 酒倉盛豐行", "30010013 酒田", "30010059 誠邦有限公司", "30010315 圳程", "30030088 九久", "30020145 鏵錡", "30010199 振泰 OFF", "30010176 振泰 ON", "30030094 和易 ON", "33001422 和易 OFF"
+                                                                      , "30010017 正興"])
 
 if transformation_choice == "30010085 宏酒樽 (夜)":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="new_raw")
@@ -1460,4 +1461,130 @@ elif transformation_choice == "33001422 和易 OFF":
 
         with open(output_filename, "rb") as f:
             st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
+
+elif transformation_choice == "30010017 正興(振興)":
+    import pandas as pd
+    import re
+    import streamlit as st
+
+    raw_data_file = st.file_uploader("Upload Raw Sales Data (.xlsx)", type=["xlsx"], key="zhengxing_raw")
+    mapping_file = st.file_uploader("Upload Mapping File (.xlsx)", type=["xlsx"], key="zhengxing_mapping")
+
+    if raw_data_file is not None and mapping_file is not None:
+        # --- Load raw (Sheet4) ---
+        df_raw = pd.read_excel(raw_data_file, sheet_name="Sheet4", header=None)
+
+        def to_int(x):
+            try:
+                if pd.isna(x): return 0
+                return int(float(str(x).strip()))
+            except:
+                return 0
+
+        records = []
+        current_product_code = None
+        current_product_name = None
+        doc_date = None  # YYYYMMDD (Gregorian)
+
+        for i in range(len(df_raw)):
+            row = df_raw.iloc[i]
+            c0 = str(row[0]).strip() if pd.notna(row[0]) else ""
+            c1 = str(row[1]).strip() if pd.notna(row[1]) else ""
+            c2 = row[2] if len(row) > 2 else None   # 銷貨數量
+            c3 = row[3] if len(row) > 3 else None   # 退貨數量
+            c4 = row[4] if len(row) > 4 else None   # 合計數量
+
+            # Banner date: "貨單日期: 114/07/28 至 114/07/31"  -> use right-side date
+            if "貨單日期" in c0 and "至" in c0:
+                m = re.search(r"至\s*([0-9]{3})/([0-9]{2})/([0-9]{2})", c0)
+                if m:
+                    y, mm, dd = map(int, m.groups())
+                    doc_date = f"{y + 1911:04d}{mm:02d}{dd:02d}"
+                continue
+
+            # Product header: "貨品編號:G0003  貨品名稱:BEEFEATER GIN"
+            if "貨品編號" in c0:
+                m = re.search(r"貨品編號[:：]\s*([A-Za-z0-9\-]+)", c0)
+                n = re.search(r"貨品名稱[:：]\s*(.+)", c0)
+                if m: current_product_code = m.group(1).strip()
+                if n: current_product_name = n.group(1).strip()
+                continue
+
+            # Skip subtotal/total lines
+            if c0.startswith("小計") or c0.startswith("合計"):
+                continue
+
+            # Data rows: 客戶編號 | 客戶簡稱 | 銷貨數量 | 退貨數量 | 合計數量
+            if c0 and c1 and (pd.notna(c2) or pd.notna(c3) or pd.notna(c4)):
+                sales = to_int(c2)
+                returns = to_int(c3)
+                qty = sales - returns
+                if qty == 0:
+                    # Fallback to 合計數量 if both sides are blank / 0
+                    qty = to_int(c4)
+                if qty == 0:
+                    continue
+
+                records.append([
+                    "INV", "U", "30010017", "正興(振興)",
+                    c0, c1, doc_date, "", current_product_code, current_product_name, qty
+                ])
+
+        # If nothing parsed, show hint
+        if not records:
+            st.warning("No transactional rows were parsed. Please check the sheet layout or share a sample for debugging.")
+        else:
+            df_parsed = pd.DataFrame(records, columns=[
+                "Type","Action","GroupCode","GroupName",
+                "CustomerCode","CustomerName","Date",
+                "PRT_Product_Code","ProductCode","ProductName","Quantity"
+            ])
+
+            # --- Load mappings ---
+            dfs_mapping = {
+                sheet: pd.read_excel(mapping_file, sheet_name=sheet, dtype=str)
+                for sheet in pd.ExcelFile(mapping_file).sheet_names
+            }
+
+            # Customer mapping
+            cust_map = dfs_mapping["Customer Mapping"].copy()
+            cust_map["ASI_CRM_Offtake_Customer_No__c"] = cust_map["ASI_CRM_Offtake_Customer_No__c"].astype(str).str.strip()
+            # Join & replace with JDE code (strip trailing .0)
+            df_parsed = df_parsed.merge(
+                cust_map[["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"]],
+                left_on="CustomerCode", right_on="ASI_CRM_Offtake_Customer_No__c", how="left"
+            )
+            df_parsed["CustomerCode"] = df_parsed["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True).fillna(df_parsed["CustomerCode"])
+            df_parsed.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
+
+            # SKU mapping
+            sku_map = dfs_mapping["SKU Mapping"].copy()
+            sku_map["ASI_CRM_Offtake_Product__c"] = sku_map["ASI_CRM_Offtake_Product__c"].astype(str).str.strip()
+            df_parsed = df_parsed.merge(
+                sku_map[["ASI_CRM_Offtake_Product__c","ASI_CRM_SKU_Code__c"]],
+                left_on="ProductCode", right_on="ASI_CRM_Offtake_Product__c", how="left"
+            )
+            df_parsed["PRT_Product_Code"] = df_parsed["ASI_CRM_SKU_Code__c"].astype(str).str.strip().fillna(df_parsed["PRT_Product_Code"])
+            df_parsed.drop(columns=["ASI_CRM_Offtake_Product__c","ASI_CRM_SKU_Code__c"], inplace=True)
+
+            # Final order (no headers export)
+            df_final = df_parsed[[
+                "Type","Action","GroupCode","GroupName",
+                "CustomerCode","CustomerName","Date",
+                "PRT_Product_Code","ProductCode","ProductName","Quantity"
+            ]]
+
+            # Preview
+            st.write("✅ Processed Data Preview:")
+            st.dataframe(df_final)
+
+            # Export
+            output_filename = "30010017 transformation.xlsx"
+            df_final.to_excel(output_filename, index=False, header=False)
+            with open(output_filename, "rb") as f:
+                st.download_button(
+                    label="📥 Download Processed File",
+                    data=f,
+                    file_name=output_filename
+                )
 
