@@ -8,7 +8,7 @@ st.write("Upload an Excel file and choose the transformation format.")
 
 # Select transformation format
 transformation_choice = st.selectbox("Select Transformation Format:", ["30010085 宏酒樽 (夜)", "30010203 宏酒樽 (日)", "30010061 向日葵", "30010010 酒倉盛豐行", "30010013 酒田", "30010059 誠邦有限公司", "30010315 圳程", "30030088 九久", "30020145 鏵錡", "30010199 振泰 OFF", "30010176 振泰 ON", "30030094 和易 ON", "33001422 和易 OFF"
-                                                                      , "30010017 正興(振興)", "30010031 廣茂隆(八條)", "30020016 日嵩", "30020027 榮好(實儀)", "30020180 暐倫 OFF", "30020203 玄星 OFF"])
+                                                                      , "30010017 正興(振興)", "30010031 廣茂隆(八條)", "30020016 日嵩", "30020027 榮好(實儀)", "30020180 暐倫 OFF", "30020203 玄星 OFF", "30020216 久悅貿易"])
 
 if transformation_choice == "30010085 宏酒樽 (夜)":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="new_raw")
@@ -2323,3 +2323,176 @@ elif transformation_choice == "30020203 玄星 OFF":
         with open(out_name, "rb") as f:
             st.download_button(label="📥 Download Selected Month", data=f, file_name=out_name)
 
+elif transformation_choice == "30020216 久悅貿易":
+    import re
+    import pandas as pd
+    import streamlit as st
+
+    raw_data_file = st.file_uploader("Upload Raw Sales Data (.xlsx)", type=["xlsx"], key="jiuyue_raw")
+    mapping_file  = st.file_uploader("Upload Mapping File (.xlsx)", type=["xlsx"], key="jiuyue_mapping")
+
+    if raw_data_file is not None and mapping_file is not None:
+        # ---------- 1) Load target sheet (pick the first YYYYMM-like sheet if present) ----------
+        xls = pd.ExcelFile(raw_data_file)
+        month_like = [s for s in xls.sheet_names if re.fullmatch(r"\d{6}", s)]
+        sheet = month_like[0] if month_like else xls.sheet_names[0]
+        df_raw = pd.read_excel(raw_data_file, sheet_name=sheet, header=None)
+
+        # ---------- 2) Parse blocks ----------
+        records = []
+        current_cust_code = None
+        current_cust_name = None
+        current_date = None
+
+        def minguo_to_yyyymmdd(s):
+            if pd.isna(s): 
+                return None
+            try:
+                y, m, d = str(s).strip().split("/")
+                y, m, d = int(y), int(m), int(d)
+                if y < 1911: 
+                    y += 1911
+                return f"{y:04d}{m:02d}{d:02d}"
+            except Exception:
+                return None
+
+        def parse_customer(line: str):
+            # Clean zero-width chars, normalize spacing
+            s = re.sub(r'[\u200b\ufeff]', '', line)
+            s = re.sub(r'\s+', ' ', s)
+            m = re.search(r'客戶簡稱[:：]\s*([A-Z0-9\-]+)\s+(.+?)(?:\s+電\s*話|$)', s)
+            if m:
+                return m.group(1).strip(), m.group(2).strip()
+            return None, None
+
+        def last_code_token(name: str):
+            toks = str(name).strip().split()
+            if toks:
+                tail = toks[-1]
+                if re.fullmatch(r"[A-Za-z0-9\-]+", tail):
+                    return tail
+            return ""
+
+        for i in range(len(df_raw)):
+            c0 = df_raw.iat[i, 0]
+            c1 = df_raw.iat[i, 1] if df_raw.shape[1] > 1 else None
+            c2 = df_raw.iat[i, 2] if df_raw.shape[1] > 2 else None
+            c3 = df_raw.iat[i, 3] if df_raw.shape[1] > 3 else None
+
+            # New customer block line
+            if isinstance(c0, str) and c0.strip().startswith("客戶簡稱"):
+                code, name = parse_customer(c0)
+                if code:
+                    current_cust_code = code
+                    current_cust_name = name
+                continue
+
+            # Skip header/total lines
+            if str(c0).strip() in ["單據日期", "合    計：", "合計", "合    計:"]:
+                continue
+
+            # Date line (Minguo)
+            if isinstance(c0, str) and re.match(r"^\d{3}/\d{2}/\d{2}$", c0.strip()):
+                current_date = minguo_to_yyyymmdd(c0.strip())
+
+            # Product rows: name in col2, quantity in col3
+            prod_name = c2 if isinstance(c2, str) else (str(c2) if pd.notna(c2) else None)
+            if prod_name and isinstance(c3, (int, float)):
+                qty = int(c3)
+                if qty == 0:
+                    continue
+                prod_code = last_code_token(prod_name)
+                records.append({
+                    "CustomerCode": current_cust_code,
+                    "CustomerName": current_cust_name,
+                    "Date": current_date,
+                    "ProductCode": prod_code,
+                    "ProductName": prod_name,
+                    "Quantity": qty
+                })
+
+        if not records:
+            st.warning("No valid rows found.")
+            st.stop()
+
+        df_rec = pd.DataFrame(records)
+
+        # ---------- 3) Normalize keys ----------
+        def norm_cust(s: str) -> str:
+            s = str(s).strip().upper().replace(" ", "")
+            return re.sub(r"\.0$", "", s)
+
+        def norm_sku(s: str) -> str:
+            return str(s).strip().upper()
+
+        df_rec["CustomerCode_norm"] = df_rec["CustomerCode"].apply(norm_cust)
+        df_rec["ProductCode_norm"]  = df_rec["ProductCode"].apply(norm_sku)
+
+        # ---------- 4) Load mappings (unique-only, prefer filtered then global) ----------
+        cust_map = pd.read_excel(mapping_file, sheet_name="Customer Mapping", dtype=str)
+        sku_map  = pd.read_excel(mapping_file, sheet_name="SKU Mapping", dtype=str)
+
+        cust_f = cust_map[cust_map["ASI_CRM_Mapping_Cust_No__c"].astype(str).str.replace(r"\.0$", "", regex=True) == "30020216"].copy()
+        sku_f  = sku_map[ sku_map["ASI_CRM_Mapping_Cust_Code__c"].astype(str).str.replace(r"\.0$", "", regex=True) == "30020216"].copy()
+
+        def prep_cust(dfm: pd.DataFrame) -> pd.DataFrame:
+            out = dfm.copy()
+            out["key"] = (out["ASI_CRM_Offtake_Customer_No__c"].astype(str)
+                          .str.strip().str.upper().str.replace(r"\.0$", "", regex=True)
+                          .str.replace(" ", "", regex=False))
+            out["val"] = out["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.strip()
+            return out[["key","val"]]
+
+        def prep_sku(dfm: pd.DataFrame) -> pd.DataFrame:
+            out = dfm.copy()
+            out["key"] = out["ASI_CRM_Offtake_Product__c"].astype(str).str.strip().str.upper()
+            out["val"] = out["ASI_CRM_SKU_Code__c"].astype(str).str.strip()
+            return out[["key","val"]]
+
+        def unique_only(kv: pd.DataFrame) -> pd.DataFrame:
+            g = kv.groupby("key")["val"].nunique().reset_index(name="n")
+            uniq = g[g["n"] == 1]["key"]
+            return kv[kv["key"].isin(uniq)].drop_duplicates(subset=["key"], keep="first")
+
+        cust_f_dict   = dict(zip(unique_only(prep_cust(cust_f))["key"],   unique_only(prep_cust(cust_f))["val"]))
+        cust_all_dict = dict(zip(unique_only(prep_cust(cust_map))["key"], unique_only(prep_cust(cust_map))["val"]))
+        sku_f_dict    = dict(zip(unique_only(prep_sku(sku_f))["key"],     unique_only(prep_sku(sku_f))["val"]))
+        sku_all_dict  = dict(zip(unique_only(prep_sku(sku_map))["key"],   unique_only(prep_sku(sku_map))["val"]))
+
+        # ---------- 5) Apply mapping
+        # NOTE: per your instruction, if no customer mapping => leave blank (do NOT keep external code)
+        # ----------
+        jde_from_filtered = df_rec["CustomerCode_norm"].map(cust_f_dict)
+        jde_from_global   = df_rec["CustomerCode_norm"].map(cust_all_dict)
+        df_rec["CustomerCode_final"] = jde_from_filtered.combine_first(jde_from_global).fillna("")
+
+        prt_from_filtered = df_rec["ProductCode_norm"].map(sku_f_dict)
+        prt_from_global   = df_rec["ProductCode_norm"].map(sku_all_dict)
+        df_rec["PRT_Product_Code"] = prt_from_filtered.fillna(prt_from_global)  # keep NaN if missing
+
+        # ---------- 6) Assemble final, de-dup ----------
+        df_final = pd.DataFrame({
+            "Type": "INV",
+            "Action": "U",
+            "GroupCode": "30020216",
+            "GroupName": "久悅貿易",
+            "CustomerCode": df_rec["CustomerCode_final"],
+            "CustomerName": df_rec["CustomerName"],
+            "Date": df_rec["Date"],
+            "PRT_Product_Code": df_rec["PRT_Product_Code"],
+            "ProductCode": df_rec["ProductCode_norm"],
+            "ProductName": df_rec["ProductName"],
+            "Quantity": df_rec["Quantity"].astype(int)
+        })
+
+        dedup_keys = ["GroupCode","CustomerCode","Date","ProductCode","Quantity"]
+        df_final = df_final.drop_duplicates(subset=dedup_keys, keep="first").reset_index(drop=True)
+
+        # ---------- 7) Preview + Export (no headers / no index) ----------
+        st.write("✅ Processed Data Preview:")
+        st.dataframe(df_final)
+
+        output_filename = "30020216 transformation.xlsx"
+        df_final.to_excel(output_filename, index=False, header=False)
+        with open(output_filename, "rb") as f:
+            st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
