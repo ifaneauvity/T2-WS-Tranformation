@@ -1702,7 +1702,6 @@ elif transformation_choice == "30010031 廣茂隆(八條)":
                 data=f,
                 file_name=output_filename
             )
-
 elif transformation_choice == "30020016 日嵩":
     import re
     import pandas as pd
@@ -1712,9 +1711,7 @@ elif transformation_choice == "30020016 日嵩":
     mapping_file  = st.file_uploader("Upload Mapping File (.xlsx)", type=["xlsx"], key="risong_mapping")
 
     if raw_data_file is not None and mapping_file is not None:
-        # ---------------------------
-        # 1) Load & detect header row
-        # ---------------------------
+        # ---------- 1) Load & detect header row ----------
         xls = pd.ExcelFile(raw_data_file)
         sheet = xls.sheet_names[0]  # expected 'AAA'
         raw = pd.read_excel(raw_data_file, sheet_name=sheet, header=None)
@@ -1722,125 +1719,106 @@ elif transformation_choice == "30020016 日嵩":
         header_row_idx = None
         for i in range(min(15, len(raw))):
             row_vals = raw.iloc[i].astype(str).tolist()
-            # Look for a line that contains the expected column markers
             if ("貨號" in row_vals[0]) and ("客戶" in (row_vals[2] if len(row_vals) > 2 else "")):
                 header_row_idx = i
                 break
         if header_row_idx is None:
-            header_row_idx = 3  # fallback seen in sample
+            header_row_idx = 3  # fallback if layout shifts
 
         df = pd.read_excel(raw_data_file, sheet_name=sheet, header=None, skiprows=header_row_idx)
         df.columns = ["ProductCode","ProductName","CustomerCode","CustomerName","FreeQty","SalesQty","ReturnQty","NetQty"]
 
-        # Remove any lingering header line
+        # remove lingering column header row if any
         df = df[df["CustomerCode"] != "客戶"].copy()
 
-        # ---------------------------
-        # 2) Normalize & numeric cast
-        # ---------------------------
+        # ---------- 2) Numeric casting & keep Net != 0 ----------
         for col in ["FreeQty","SalesQty","ReturnQty","NetQty"]:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
-
-        # Keep only rows with net ≠ 0
         df = df[df["NetQty"] != 0].copy()
 
-        # ---------------------------
-        # 3) Date from banner (end date)
-        # ---------------------------
-        # Parse row 2 (0-based) for banner like: "統計日期: 2024/09/01 至 2024/09/30"
+        # ---------- 3) Date from banner line (use END of range) ----------
         row2 = " ".join([str(x) for x in raw.iloc[2].tolist() if pd.notna(x)])
         dates = re.findall(r'(\d{4})/(\d{2})/(\d{2})', row2)
         date_val = None
         if dates:
-            y, m, d = dates[-1]                   # use end date
+            y, m, d = dates[-1]                       # end date
             date_val = f"{y}{m}{d}"
         df["Date"] = date_val
 
-        # ---------------------------
-        # 4) Key normalization helpers
-        # ---------------------------
+        # ---------- 4) Key normalization ----------
         def norm_cust(s: str) -> str:
             s = str(s).strip()
-            s = re.sub(r'\.0$', '', s)           # remove trailing .0
+            s = re.sub(r'\.0$', '', s)
             s = s.upper().replace(' ', '')
             return s
 
         def norm_sku(s: str) -> str:
             s = str(s).strip().upper().replace(' ', '')
-            # normalize full-width letters if they ever appear
-            s = s.replace('Ｌ', 'L').replace('Ａ', 'A').replace('Ｂ', 'B')
+            # full-width letters -> half-width (defensive)
+            s = s.replace('Ｌ','L').replace('Ａ','A').replace('Ｂ','B')
             return s
 
         df["CustomerCode_norm"] = df["CustomerCode"].apply(norm_cust)
         df["ProductCode_norm"]  = df["ProductCode"].apply(norm_sku)
 
-        # ---------------------------
-        # 5) Load mappings (dtype=str)
-        # ---------------------------
+        # ---------- 5) Load mappings ----------
         cust_map = pd.read_excel(mapping_file, sheet_name="Customer Mapping", dtype=str)
         sku_map  = pd.read_excel(mapping_file, sheet_name="SKU Mapping", dtype=str)
 
-        # Filter to this wholesaler where available, but still fallback to global
-        cust_map_f = cust_map[cust_map["ASI_CRM_Mapping_Cust_No__c"].astype(str).str.replace(r"\.0$", "", regex=True) == "30020016"].copy()
-        sku_map_f  = sku_map[ sku_map["ASI_CRM_Mapping_Cust_Code__c"].astype(str).str.replace(r"\.0$", "", regex=True) == "30020016"].copy()
+        # filtered (preferred) + global fallback
+        cust_f = cust_map[cust_map["ASI_CRM_Mapping_Cust_No__c"].astype(str).str.replace(r"\.0$", "", regex=True)=="30020016"].copy()
+        sku_f  = sku_map[ sku_map["ASI_CRM_Mapping_Cust_Code__c"].astype(str).str.replace(r"\.0$", "", regex=True)=="30020016"].copy()
 
-        # Prepare normalized join keys in mappings
-        for dfm in (cust_map_f, cust_map):
-            dfm["ASI_CRM_Offtake_Customer_No__c_norm"] = (
-                dfm["ASI_CRM_Offtake_Customer_No__c"].astype(str)
-                .str.strip().str.upper().str.replace(r"\.0$", "", regex=True).str.replace(' ', '', regex=False)
-            )
-        for dfm in (sku_map_f, sku_map):
-            dfm["ASI_CRM_Offtake_Product__c_norm"] = (
-                dfm["ASI_CRM_Offtake_Product__c"].astype(str)
-                .str.strip().str.upper().str.replace(' ', '', regex=False)
-            )
+        # prep normalized key/value frames
+        def prep_cust(dfm):
+            out = dfm.copy()
+            out["key"] = (out["ASI_CRM_Offtake_Customer_No__c"]
+                          .astype(str).str.strip().str.upper()
+                          .str.replace(r"\.0$", "", regex=True).str.replace(' ', '', regex=False))
+            out["val"] = out["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.strip()
+            return out[["key","val"]]
 
-        # ---------------------------
-        # 6) Customer mapping (two-stage, non-forced)
-        # ---------------------------
-        df = df.merge(
-            cust_map_f[["ASI_CRM_Offtake_Customer_No__c_norm","ASI_CRM_JDE_Cust_No_Formula__c"]],
-            left_on="CustomerCode_norm", right_on="ASI_CRM_Offtake_Customer_No__c_norm", how="left"
-        )
-        df["CustomerCode_mapped"] = df["ASI_CRM_JDE_Cust_No_Formula__c"]
+        def prep_sku(dfm):
+            out = dfm.copy()
+            out["key"] = out["ASI_CRM_Offtake_Product__c"].astype(str).str.strip().str.upper().str.replace(' ', '', regex=False)
+            out["val"] = out["ASI_CRM_SKU_Code__c"].astype(str).str.strip()
+            return out[["key","val"]]
 
-        miss_mask = df["CustomerCode_mapped"].isna()
-        if miss_mask.any():
-            df = df.merge(
-                cust_map[["ASI_CRM_Offtake_Customer_No__c_norm","ASI_CRM_JDE_Cust_No_Formula__c"]],
-                left_on="CustomerCode_norm", right_on="ASI_CRM_Offtake_Customer_No__c_norm",
-                how="left", suffixes=('','_all')
-            )
-            df["CustomerCode_mapped"] = df["CustomerCode_mapped"].fillna(df["ASI_CRM_JDE_Cust_No_Formula__c_all"])
+        cust_f_kv   = prep_cust(cust_f)
+        cust_all_kv = prep_cust(cust_map)
+        sku_f_kv    = prep_sku(sku_f)
+        sku_all_kv  = prep_sku(sku_map)
 
-        # Final customer code: prefer mapped JDE; else keep normalized original
+        # keep only keys with a SINGLE unique target (avoid fan-out duplicates)
+        def unique_only(kv: pd.DataFrame) -> pd.DataFrame:
+            g = kv.groupby("key")["val"].nunique().reset_index(name="n")
+            uniq_keys = g[g["n"]==1]["key"]
+            return kv[kv["key"].isin(uniq_keys)].drop_duplicates(subset=["key"], keep="first")
+
+        cust_f_unique   = unique_only(cust_f_kv)
+        cust_all_unique = unique_only(cust_all_kv)
+        sku_f_unique    = unique_only(sku_f_kv)
+        sku_all_unique  = unique_only(sku_all_kv)
+
+        # dictionaries for fast, one-to-one lookups
+        cust_f_dict   = dict(zip(cust_f_unique["key"],   cust_f_unique["val"]))
+        cust_all_dict = dict(zip(cust_all_unique["key"], cust_all_unique["val"]))
+        sku_f_dict    = dict(zip(sku_f_unique["key"],    sku_f_unique["val"]))
+        sku_all_dict  = dict(zip(sku_all_unique["key"],  sku_all_unique["val"]))
+
+        # ---------- 6) Apply mapping WITHOUT forcing, and avoid many-to-one fan-out ----------
+        jde_from_filtered = df["CustomerCode_norm"].map(cust_f_dict)
+        jde_from_global   = df["CustomerCode_norm"].map(cust_all_dict)
         df["CustomerCode_final"] = (
-            df["CustomerCode_mapped"].fillna(df["CustomerCode_norm"])
+            jde_from_filtered.fillna(jde_from_global).fillna(df["CustomerCode_norm"])
             .astype(str).str.replace(r"\.0$", "", regex=True)
         )
 
-        # ---------------------------
-        # 7) SKU mapping (two-stage, non-forced)
-        # ---------------------------
-        df = df.merge(
-            sku_map_f[["ASI_CRM_Offtake_Product__c_norm","ASI_CRM_SKU_Code__c"]],
-            left_on="ProductCode_norm", right_on="ASI_CRM_Offtake_Product__c_norm", how="left"
-        )
-        df["PRT_Product_Code"] = df["ASI_CRM_SKU_Code__c"]
+        prt_from_filtered = df["ProductCode_norm"].map(sku_f_dict)
+        prt_from_global   = df["ProductCode_norm"].map(sku_all_dict)
+        df["PRT_Product_Code"] = prt_from_filtered.fillna(prt_from_global)  # leave NaN if still missing
 
-        miss_sku = df["PRT_Product_Code"].isna()
-        if miss_sku.any():
-            df = df.merge(
-                sku_map[["ASI_CRM_Offtake_Product__c_norm","ASI_CRM_SKU_Code__c"]],
-                left_on="ProductCode_norm", right_on="ASI_CRM_Offtake_Product__c_norm",
-                how="left", suffixes=('','_all')
-            )
-            df["PRT_Product_Code"] = df["PRT_Product_Code"].fillna(df["ASI_CRM_SKU_Code__c_all"])
-
-        # ---------------------------
-        # 8) Assemble final frame
-        # ---------------------------
+        # ---------- 7) Assemble final & dedup ----------
         df_final = pd.DataFrame({
             "Type": "INV",
             "Action": "U",
@@ -1855,21 +1833,16 @@ elif transformation_choice == "30020016 日嵩":
             "Quantity": df["NetQty"].astype(int)
         })
 
-        # De-duplicate exact duplicates
+        # remove exact duplicates; this plus unique-only mapping prevents the “same row repeated 5 times” issue
         dedup_keys = ["GroupCode","CustomerCode","Date","ProductCode","Quantity"]
         df_final = df_final.drop_duplicates(subset=dedup_keys, keep="first").reset_index(drop=True)
 
-        # ---------------------------
-        # 9) Preview + Export
-        # ---------------------------
+        # ---------- 8) Preview & export (no headers / no index) ----------
         st.write("✅ Processed Data Preview:")
         st.dataframe(df_final)
 
         output_filename = "30020016 transformation.xlsx"
-        df_final.to_excel(output_filename, index=False, header=False)  # no headers, no index
+        df_final.to_excel(output_filename, index=False, header=False)
         with open(output_filename, "rb") as f:
-            st.download_button(
-                label="📥 Download Processed File",
-                data=f,
-                file_name=output_filename
-            )
+            st.download_button(label="📥 Download Processed File", data=f, file_name=output_filename)
+
