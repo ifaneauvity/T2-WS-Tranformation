@@ -2893,10 +2893,9 @@ elif transformation_choice == "30010008 利多吉":
     mapping_file  = st.file_uploader("Upload Mapping File (.xls/.xlsx)",  type=["xls","xlsx"], key="liduoji_map")
 
     if raw_data_file is not None and mapping_file is not None:
-        # Pick engine for legacy .xls (requires `xlrd` installed)
+        # =============== engines (.xls needs xlrd) ===============
         def pick_engine(uploaded):
             return "xlrd" if uploaded and uploaded.name.lower().endswith(".xls") else None
-
         raw_eng = pick_engine(raw_data_file)
         map_eng = pick_engine(mapping_file)
 
@@ -2931,6 +2930,37 @@ elif transformation_choice == "30010008 利多吉":
             tmp = tmp[tmp["key"].isin(uniq)].drop_duplicates(subset="key", keep="first")
             return dict(zip(tmp["key"], tmp["val"]))
 
+        # ---- header detection helpers (robust to slight shifts)
+        def looks_like_header(cells):
+            row = [str(c).strip() for c in cells]
+            joined = "|".join(row)
+            has_date = any(tok in joined for tok in ["銷貨日期", "日期"])
+            has_doc  = any(tok in joined for tok in ["銷貨單號", "單據號碼"])
+            has_cust = any(tok in joined for tok in ["客戶", "客戶簡稱", "客戶編號", "客戶代號"])
+            has_qty  = any(tok in joined for tok in ["數量", "數量(瓶)"])
+            return has_date and has_doc and has_cust and has_qty
+
+        def find_indices(header_cells):
+            """Return (date_idx, doc_idx, cust_code_idx, cust_name_idx, qty_idx) best-effort."""
+            row = [str(c).strip() for c in header_cells]
+            def idx_of(cands):
+                for t in cands:
+                    if t in row:
+                        return row.index(t)
+                return None
+            date_idx = idx_of(["銷貨日期","日期"])
+            doc_idx  = idx_of(["銷貨單號","單據號碼"])
+            cust_code_idx = idx_of(["客戶編號","客戶代號"])
+            cust_name_idx = idx_of(["客戶簡稱","客戶"])
+            qty_idx  = idx_of(["數量","數量(瓶)"])
+            # fallbacks (common layout: A,B,D,E,F)
+            if date_idx is None: date_idx = 0
+            if doc_idx  is None: doc_idx  = 1
+            if cust_code_idx is None: cust_code_idx = 3
+            if cust_name_idx is None: cust_name_idx = 4
+            if qty_idx  is None: qty_idx  = 5
+            return date_idx, doc_idx, cust_code_idx, cust_name_idx, qty_idx
+
         # =============== 1) Parse all sheets (blocks: 起訖品號 …) ===============
         xls = pd.ExcelFile(raw_data_file, engine=raw_eng)
         sheets = xls.sheet_names
@@ -2940,15 +2970,16 @@ elif transformation_choice == "30010008 利多吉":
             if df.empty:
                 return pd.DataFrame()
 
+            ncols = df.shape[1]
             recs = []
             current_code = ""
             current_name = ""
             in_grid = False
+            header_idx_tuple = None  # indices for columns within the grid
 
             def sval(r, c):
-                return str(df.iat[r, c]).strip() if (df.shape[1] > c and pd.notna(df.iat[r, c])) else ""
+                return str(df.iat[r, c]).strip() if (c < ncols and pd.notna(df.iat[r, c])) else ""
 
-            # when product name is empty on the header row, look ahead a few lines in col D
             def seek_name_forward(start_row: int) -> str:
                 for rr in range(start_row + 1, min(start_row + 4, len(df))):
                     s3 = sval(rr, 3)
@@ -2957,60 +2988,92 @@ elif transformation_choice == "30010008 利多吉":
                 return ""
 
             for r in range(len(df)):
-                s0, s1, s2, s3, s4, s5, s6 = (
-                    sval(r, 0), sval(r, 1), sval(r, 2), sval(r, 3),
-                    sval(r, 4), sval(r, 5), sval(r, 6)
-                )
+                # collect a window of cells for header sniffing when needed
+                row_cells = [df.iat[r, c] if (c < ncols and pd.notna(df.iat[r, c])) else "" for c in range(min(12, ncols))]
+                s0 = sval(r, 0)
 
                 # ---- product header: "起訖品號：<code>" (name usually in col D)
-                if s0.startswith("起訖品號："):
+                if isinstance(s0, str) and s0.startswith("起訖品號："):
                     current_code = s0.replace("起訖品號：", "").strip().upper()
-                    current_name = s3 if s3 else seek_name_forward(r)
+                    # prefer same-row col D; else look forwards
+                    maybe_name = sval(r, 3)
+                    current_name = maybe_name if maybe_name else seek_name_forward(r)
                     in_grid = False
+                    header_idx_tuple = None
                     continue
 
-                # ---- detail grid header (variants)
-                if (s0 in ("銷貨日期", "日期") and s1 in ("銷貨單號", "單據號碼")
-                        and (s3 in ("客戶編號", "客戶代號") and s4 in ("客戶", "客戶簡稱"))
-                        and s5 in ("數量", "數量(瓶)")):
+                # ---- detail grid header (robust detection)
+                if looks_like_header(row_cells):
                     in_grid = True
+                    header_idx_tuple = find_indices([str(x).strip() for x in row_cells])
                     continue
 
-                if not in_grid or not current_code:
+                if not in_grid or not current_code or header_idx_tuple is None:
                     continue
 
-                # ---- skip subtotal lines
-                if any(k in s0 for k in ("合計", "小計")):
+                # ---- subtotal/other non-data lines: skip (do NOT break the sheet scan)
+                joined = "|".join([str(c).strip() for c in row_cells])
+                if any(tag in joined for tag in ("合計", "小計")):
                     continue
 
-                # ---- detail row (A:日期 B:單號 D:客戶編號 E:客戶名 F:數量)
-                date_ymd = minguo_to_ymd(s0)
+                # ---- detail row using detected indices
+                date_idx, doc_idx, cust_code_idx, cust_name_idx, qty_idx = header_idx_tuple
+                date_cell = df.iat[r, date_idx] if date_idx < ncols else None
+                doc_cell  = sval(r, doc_idx) if doc_idx < ncols else ""
+                cc_cell   = sval(r, cust_code_idx) if cust_code_idx < ncols else ""
+                cname_cell= sval(r, cust_name_idx) if cust_name_idx < ncols else ""
+
+                date_ymd  = minguo_to_ymd(date_cell)
                 if not date_ymd:
+                    # not a detail row (blank, text, footer, next product header, etc.)
                     continue
 
-                qty = pd.to_numeric(df.iat[r, 5] if df.shape[1] > 5 else None, errors="coerce")
-                if pd.isna(qty) or float(qty) == 0:
+                # quantity: first try qty_idx; else scan a few cols to the right of name
+                qty_val = None
+                if qty_idx < ncols:
+                    qty_val = pd.to_numeric(df.iat[r, qty_idx], errors="coerce")
+                if (qty_val is None) or pd.isna(qty_val):
+                    for c in range(min(ncols, cust_name_idx + 1), min(ncols, cust_name_idx + 4)):
+                        qv = pd.to_numeric(df.iat[r, c], errors="coerce")
+                        if pd.notna(qv):
+                            qty_val = qv
+                            break
+
+                if qty_val is None or float(qty_val) == 0:
                     continue
 
                 recs.append({
                     "Sheet": sheet_name,
                     "Row": r,
                     "Date": date_ymd,
-                    "DocumentNo": s1,
-                    "CustomerCode_ext": s3,
-                    "CustomerName": s4,
+                    "DocumentNo": doc_cell,
+                    "CustomerCode_ext": cc_cell,
+                    "CustomerName": cname_cell,
                     "ProductCode": current_code,
                     "ProductName": current_name,
-                    "Quantity": int(float(qty)),
+                    "Quantity": int(float(qty_val)),
                 })
 
             return pd.DataFrame(recs)
 
-        parsed = [extract_sheet(s) for s in sheets]
-        df_all = pd.concat([d for d in parsed if not d.empty], ignore_index=True)
-        if df_all.empty:
-            st.warning("No valid rows found across all sheets.")
+        # --- Parse all sheets with logging, guard against empty concat
+        frames = []
+        parse_log = []
+        for s in sheets:
+            try:
+                d = extract_sheet(s)
+                n = 0 if d is None else len(d)
+                if n:
+                    frames.append(d)
+                parse_log.append(f"{s}: {n} rows")
+            except Exception as e:
+                parse_log.append(f"{s}: ERROR → {e}")
+
+        if not frames:
+            st.error("No valid rows found in any sheet.\n\nParse summary:\n" + "\n".join(parse_log))
             st.stop()
+
+        df_all = pd.concat(frames, ignore_index=True)
 
         # Combine duplicates within the same doc/customer/product/date
         group_keys = ["Date", "DocumentNo", "CustomerCode_ext", "CustomerName", "ProductCode", "ProductName"]
@@ -3058,11 +3121,16 @@ elif transformation_choice == "30010008 利多吉":
             "DocumentNo": df_all["DocumentNo"],
         })
 
+        # ---- UI
         st.write("✅ Processed Data Preview:")
         st.dataframe(final.head(30))
+
+        with st.expander("🔎 Parse summary (per sheet)"):
+            st.code("\n".join(parse_log))
 
         # Export (no headers, no index)
         out_name = "30010008_利多吉_transformation.xlsx"
         final.to_excel(out_name, index=False, header=False)
         with open(out_name, "rb") as f:
             st.download_button("📥 Download Processed File", f, file_name=out_name)
+
