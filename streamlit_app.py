@@ -3901,19 +3901,55 @@ elif transformation_choice == "30030021 合歡 ON":
     import re
     import pandas as pd
     import streamlit as st
+    from io import BytesIO
 
     # ---- Uploaders (allow .xls / .xlsx)
     raw_data_file = st.file_uploader("Upload Raw Sales Data (.xls/.xlsx)", type=["xls", "xlsx"], key="hehuan_on_raw")
     mapping_file  = st.file_uploader("Upload Mapping File (.xls/.xlsx)",  type=["xls", "xlsx"], key="hehuan_on_map")
 
     if raw_data_file is not None and mapping_file is not None:
-        # -------- Engines (.xls needs xlrd) --------
+        # ---------------- Engine helpers (fixes xlrd reading .xlsx error) ----------------
         def pick_engine(uploaded):
-            return "xlrd" if uploaded and uploaded.name.lower().endswith(".xls") else None
+            name = (uploaded.name or "").lower()
+            if name.endswith(".xlsx") or ".xlsx" in name:
+                return "openpyxl"   # force openpyxl for any .xlsx (even weird names like .xls.xlsx)
+            if name.endswith(".xls"):
+                return "xlrd"
+            return None  # let pandas choose
+
+        def to_buffer(uploaded_file):
+            data = uploaded_file.read()
+            return data, BytesIO(data)  # (bytes, reusable buffer)
+
+        def read_excel_safe(buf_bytes, sheet_name=0, header=None, engine=None, **kwargs):
+            # try chosen engine
+            try:
+                return pd.read_excel(BytesIO(buf_bytes), sheet_name=sheet_name, header=header, engine=engine, **kwargs)
+            except Exception:
+                # try without engine (let pandas decide)
+                try:
+                    return pd.read_excel(BytesIO(buf_bytes), sheet_name=sheet_name, header=header, **kwargs)
+                except Exception:
+                    # last fallback: alternate engine
+                    alt = "openpyxl" if engine == "xlrd" else "xlrd"
+                    return pd.read_excel(BytesIO(buf_bytes), sheet_name=sheet_name, header=header, engine=alt, **kwargs)
+
+        def excel_file_safe(buf_bytes, engine=None):
+            try:
+                return pd.ExcelFile(BytesIO(buf_bytes), engine=engine)
+            except Exception:
+                try:
+                    return pd.ExcelFile(BytesIO(buf_bytes))  # let pandas decide
+                except Exception:
+                    alt = "openpyxl" if engine == "xlrd" else "xlrd"
+                    return pd.ExcelFile(BytesIO(buf_bytes), engine=alt)
+
         raw_eng = pick_engine(raw_data_file)
         map_eng = pick_engine(mapping_file)
+        raw_bytes, _ = to_buffer(raw_data_file)
+        map_bytes, _  = to_buffer(mapping_file)
 
-        # -------- Helpers --------
+        # ---------------- Utilities ----------------
         def minguo_to_ymd(s: object) -> str:
             """Convert Minguo date '114/05/07' → '20250507'. Return '' if not match."""
             if pd.isna(s):
@@ -3938,12 +3974,12 @@ elif transformation_choice == "30030021 合歡 ON":
         norm_code = lambda s: str(s).strip().upper().replace(" ", "").replace(".0", "")
         norm_sku  = lambda s: str(s).strip().upper()
 
-        # -------- 1) Parse all sheets (pattern-based) --------
-        xls = pd.ExcelFile(raw_data_file, engine=raw_eng)
+        # ---------------- 1) Parse all sheets ----------------
+        xls = excel_file_safe(raw_bytes, engine=raw_eng)
         sheets = xls.sheet_names
 
         def parse_sheet(sheet_name: str) -> pd.DataFrame:
-            df = pd.read_excel(raw_data_file, sheet_name=sheet_name, header=None, engine=raw_eng)
+            df = read_excel_safe(raw_bytes, sheet_name=sheet_name, header=None, engine=raw_eng)
             if df.empty:
                 return pd.DataFrame()
 
@@ -4001,9 +4037,9 @@ elif transformation_choice == "30030021 合歡 ON":
 
         raw_extracted = pd.concat(parts, ignore_index=True)
 
-        # -------- 2) Mappings (unique-only; prefer 30030021, then global) --------
-        cust_map = pd.read_excel(mapping_file, sheet_name="Customer Mapping", dtype=str, engine=map_eng)
-        sku_map  = pd.read_excel(mapping_file, sheet_name="SKU Mapping",    dtype=str, engine=map_eng)
+        # ---------------- 2) Mappings (unique-only; prefer 30030021, then global) ----------------
+        cust_map = read_excel_safe(map_bytes, sheet_name="Customer Mapping", dtype=str, engine=map_eng)
+        sku_map  = read_excel_safe(map_bytes, sheet_name="SKU Mapping",    dtype=str, engine=map_eng)
 
         cust_map["ASI_CRM_Mapping_Cust_No__c"]   = cust_map["ASI_CRM_Mapping_Cust_No__c"].astype(str).str.replace(r"\.0$", "", regex=True)
         sku_map["ASI_CRM_Mapping_Cust_Code__c"] = sku_map["ASI_CRM_Mapping_Cust_Code__c"].astype(str).str.replace(r"\.0$", "", regex=True)
@@ -4027,7 +4063,7 @@ elif transformation_choice == "30030021 合歡 ON":
                                     df_m["ProductCode_norm"].map(m_sku_g)
                                   ).fillna("")
 
-        # -------- 3) Assemble final + aggregate duplicates --------
+        # ---------------- 3) Assemble final + aggregate duplicates ----------------
         final = pd.DataFrame({
             "Type": "INV",
             "Action": "U",
@@ -4049,7 +4085,7 @@ elif transformation_choice == "30030021 合歡 ON":
             as_index=False
         )["Quantity"].sum().sort_values(["Date","ProductCode","CustomerName"]).reset_index(drop=True)
 
-        # -------- UI --------
+        # ---------------- UI ----------------
         st.write("✅ Processed Data Preview (first 20 rows):")
         st.dataframe(final.head(20))
 
@@ -4059,7 +4095,7 @@ elif transformation_choice == "30030021 合歡 ON":
             st.code("\n".join(parse_log))
             st.write(f"Total rows: {len(final)} | Unmapped customers: {unmapped_cust} | Unmapped SKUs: {unmapped_sku}")
 
-        # -------- Download (no headers, no index) --------
+        # ---------------- Download (no headers, no index) ----------------
         export_cols = ["Type","Action","GroupCode","GroupName",
                        "CustomerCode","CustomerName","Date",
                        "PRT_Product_Code","ProductCode","ProductName","Quantity"]
@@ -4067,3 +4103,4 @@ elif transformation_choice == "30030021 合歡 ON":
         final[export_cols].to_excel(out_name, index=False, header=False)
         with open(out_name, "rb") as f:
             st.download_button("📥 Download Processed File", f, file_name=out_name)
+
