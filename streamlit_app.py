@@ -8,7 +8,8 @@ st.write("Upload an Excel file and choose the transformation format.")
 
 # Select transformation format
 transformation_choice = st.selectbox("Select Transformation Format:", ["30010085 宏酒樽 (夜)", "30010203 宏酒樽 (日)", "30010061 向日葵", "30010010 酒倉盛豐行", "30010013 酒田", "30010059 誠邦有限公司", "30010315 圳程", "30030088 九久", "30020145 鏵錡", "30010199 振泰 OFF", "30010176 振泰 ON", "30030094 和易 ON", "33001422 和易 OFF"
-                                                                      , "30010017 正興(振興)", "30010031 廣茂隆(八條)", "30020016 日嵩", "30020027 榮好(實儀)", "30020180 暐倫 OFF", "30020203 玄星 OFF", "30020216 久悅貿易", "30030061 合歡 OFF", "30030076 裕陞（分月）", "30010008 利多吉", "30010154 亨玖"])
+                                                                      , "30010017 正興(振興)", "30010031 廣茂隆(八條)", "30020016 日嵩", "30020027 榮好(實儀)", "30020180 暐倫 OFF", "30020203 玄星 OFF", "30020216 久悅貿易", "30030061 合歡 OFF", "30030076 裕陞（分月）", "30010008 利多吉", "30010154 亨玖", "30010185 瑞星翰德(夜點)"
+                                                                      ])
 
 if transformation_choice == "30010085 宏酒樽 (夜)":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="new_raw")
@@ -3322,3 +3323,181 @@ elif transformation_choice == "30010154 亨玖":
         final_fixed.to_excel(out_name, index=False, header=False)
         with open(out_name, "rb") as f:
             st.download_button("📥 Download Processed File", f, file_name=out_name)
+
+elif transformation_choice == "30010185 瑞星翰德(夜點)":
+    import re
+    import pandas as pd
+    import streamlit as st
+
+    # ---- Uploaders: allow both .xls and .xlsx
+    raw_data_file = st.file_uploader("Upload Raw Sales Data (.xls/.xlsx)", type=["xls","xlsx"], key="ruixing_night_raw")
+    mapping_file  = st.file_uploader("Upload Mapping File (.xls/.xlsx)",  type=["xls","xlsx"], key="ruixing_night_map")
+
+    if raw_data_file is not None and mapping_file is not None:
+        # -------- Engines (.xls needs xlrd) --------
+        def pick_engine(uploaded):
+            return "xlrd" if uploaded and uploaded.name.lower().endswith(".xls") else None
+        raw_eng = pick_engine(raw_data_file)
+        map_eng = pick_engine(mapping_file)
+
+        # -------- Helpers --------
+        def parse_period_end(df: pd.DataFrame) -> str | None:
+            """
+            Find '日期區間:114/07/01~114/07/30' and return end date as YYYYMMDD.
+            """
+            for r in range(min(30, len(df))):
+                for c in range(min(8, df.shape[1])):
+                    val = df.iat[r, c]
+                    if pd.isna(val):
+                        continue
+                    s = str(val).strip()
+                    m = re.search(r'日期區間[:：]\s*(\d{3})/(\d{2})/(\d{2})\s*~\s*(\d{3})/(\d{2})/(\d{2})', s)
+                    if m:
+                        y2, m2, d2 = int(m.group(4)) + 1911, int(m.group(5)), int(m.group(6))
+                        return f"{y2:04d}{m2:02d}{d2:02d}"
+            return None
+
+        def unique_only_map(df, key_col, val_col, normalize=lambda s: s):
+            tmp = df[[key_col, val_col]].dropna().copy()
+            tmp["key"] = tmp[key_col].astype(str).map(normalize)
+            tmp["val"] = tmp[val_col].astype(str).str.strip()
+            counts = tmp.groupby("key")["val"].nunique().reset_index(name="n")
+            uniq = set(counts[counts["n"] == 1]["key"])
+            tmp = tmp[tmp["key"].isin(uniq)].drop_duplicates(subset="key", keep="first")
+            return dict(zip(tmp["key"], tmp["val"]))
+
+        norm_code = lambda s: str(s).strip().upper().replace(" ", "").replace(".0", "")
+        norm_sku  = lambda s: str(s).strip().upper()
+
+        # -------- 1) Parse all sheets --------
+        xls = pd.ExcelFile(raw_data_file, engine=raw_eng)
+        sheets = xls.sheet_names
+
+        def extract_sheet(sheet_name: str) -> pd.DataFrame:
+            df = pd.read_excel(raw_data_file, sheet_name=sheet_name, header=None, engine=raw_eng)
+            if df.empty:
+                return pd.DataFrame()
+
+            date_end = parse_period_end(df)
+
+            # Expect header row: 產品編號 | 品名規格 | 客戶編號 | 客戶名稱 | 數量(...)
+            header_row = None
+            for r in range(len(df)):
+                row = [str(df.iat[r, c]).strip() if (c < df.shape[1] and pd.notna(df.iat[r, c])) else "" for c in range(df.shape[1])]
+                if len(row) >= 5 and row[0] == "產品編號" and row[1] == "品名規格" and row[2] == "客戶編號" and row[3] == "客戶名稱" and "數量" in row[4]:
+                    header_row = r
+                    break
+            if header_row is None:
+                return pd.DataFrame()
+
+            recs = []
+            for r in range(header_row + 1, len(df)):
+                prod_code = df.iat[r, 0] if df.shape[1] > 0 else None
+                prod_name = df.iat[r, 1] if df.shape[1] > 1 else None
+                cust_code = df.iat[r, 2] if df.shape[1] > 2 else None
+                cust_name = df.iat[r, 3] if df.shape[1] > 3 else None
+                qty       = df.iat[r, 4] if df.shape[1] > 4 else None
+
+                # stop at totals
+                if isinstance(prod_code, str) and prod_code.strip().startswith("總計"):
+                    break
+
+                q = pd.to_numeric(qty, errors="coerce")
+                if pd.isna(q) or q == 0:
+                    continue
+                if not isinstance(cust_name, str) or not cust_name.strip():
+                    continue
+
+                recs.append({
+                    "Date": date_end,
+                    "CustomerCode_ext": str(cust_code).strip() if cust_code is not None else "",
+                    "CustomerName": cust_name.strip(),
+                    "ProductCode": str(prod_code).strip().upper() if isinstance(prod_code, str) else "",
+                    "ProductName": str(prod_name).strip() if isinstance(prod_name, str) else "",
+                    "Quantity": int(q),
+                    "Sheet": sheet_name
+                })
+            return pd.DataFrame(recs)
+
+        frames, parse_log = [], []
+        for s in sheets:
+            try:
+                d = extract_sheet(s)
+                n = 0 if d is None else len(d)
+                if n:
+                    frames.append(d)
+                parse_log.append(f"{s}: {n} rows")
+            except Exception as e:
+                parse_log.append(f"{s}: ERROR → {e}")
+
+        if not frames:
+            st.error("No valid rows found in any sheet.\n\nParse summary:\n" + "\n".join(parse_log))
+            st.stop()
+
+        df_all = pd.concat(frames, ignore_index=True)
+
+        # -------- 2) Mappings (unique-only; prefer filtered 30010185, then global) --------
+        cust_map = pd.read_excel(mapping_file, sheet_name="Customer Mapping", dtype=str, engine=map_eng)
+        sku_map  = pd.read_excel(mapping_file, sheet_name="SKU Mapping",    dtype=str, engine=map_eng)
+
+        cust_map["ASI_CRM_Mapping_Cust_No__c"]    = cust_map["ASI_CRM_Mapping_Cust_No__c"].astype(str).str.replace(r"\.0$", "", regex=True)
+        sku_map["ASI_CRM_Mapping_Cust_Code__c"]  = sku_map["ASI_CRM_Mapping_Cust_Code__c"].astype(str).str.replace(r"\.0$", "", regex=True)
+
+        cust_f = cust_map[cust_map["ASI_CRM_Mapping_Cust_No__c"] == "30010185"].copy()
+        sku_f  = sku_map[sku_map["ASI_CRM_Mapping_Cust_Code__c"] == "30010185"].copy()
+
+        m_cust_f = unique_only_map(cust_f,  "ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c", norm_code)
+        m_cust_g = unique_only_map(cust_map,"ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c", norm_code)
+        m_sku_f  = unique_only_map(sku_f,   "ASI_CRM_Offtake_Product__c",     "ASI_CRM_SKU_Code__c",           norm_sku)
+        m_sku_g  = unique_only_map(sku_map, "ASI_CRM_Offtake_Product__c",     "ASI_CRM_SKU_Code__c",           norm_sku)
+
+        df_all["CustomerCode_norm"] = df_all["CustomerCode_ext"].map(norm_code)
+        df_all["CustomerCode"] = df_all["CustomerCode_norm"].map(m_cust_f).fillna(
+                                  df_all["CustomerCode_norm"].map(m_cust_g)).fillna("")  # leave blank if unmapped
+
+        df_all["ProductCode_norm"] = df_all["ProductCode"].map(norm_sku)
+        df_all["PRT_Product_Code"] = df_all["ProductCode_norm"].map(m_sku_f).fillna(
+                                      df_all["ProductCode_norm"].map(m_sku_g)).fillna("")
+
+        # -------- 3) Assemble final + aggregate duplicates --------
+        final = pd.DataFrame({
+            "Type": "INV",
+            "Action": "U",
+            "GroupCode": "30010185",
+            "GroupName": "瑞星翰德(夜點)",
+            "CustomerCode": df_all["CustomerCode"],
+            "CustomerName": df_all["CustomerName"],
+            "Date": df_all["Date"],
+            "PRT_Product_Code": df_all["PRT_Product_Code"],
+            "ProductCode": df_all["ProductCode_norm"],
+            "ProductName": df_all["ProductName"],
+            "Quantity": df_all["Quantity"].astype(int),
+            "Sheet": df_all["Sheet"]
+        })
+
+        final = final.groupby(
+            ["Type","Action","GroupCode","GroupName",
+             "CustomerCode","CustomerName","Date",
+             "PRT_Product_Code","ProductCode","ProductName","Sheet"],
+            as_index=False
+        )["Quantity"].sum().sort_values(["Sheet","ProductCode","CustomerName"]).reset_index(drop=True)
+
+        # -------- UI --------
+        st.write("✅ Processed Data Preview (first 20 rows):")
+        st.dataframe(final.head(20))
+
+        with st.expander("🔎 Parse & Mapping Summary"):
+            unmapped_cust = int((final["CustomerCode"] == "").sum())
+            unmapped_sku  = int((final["PRT_Product_Code"] == "").sum())
+            st.code("\n".join(parse_log))
+            st.write(f"Total rows: {len(final)} | Unmapped customers: {unmapped_cust} | Unmapped SKUs: {unmapped_sku}")
+
+        # -------- Download (no headers, no index; exclude 'Sheet' like usual) --------
+        export_cols = ["Type","Action","GroupCode","GroupName",
+                       "CustomerCode","CustomerName","Date",
+                       "PRT_Product_Code","ProductCode","ProductName","Quantity"]
+        out_name = "30010185_瑞星翰德_夜點_transformation.xlsx"
+        final[export_cols].to_excel(out_name, index=False, header=False)
+        with open(out_name, "rb") as f:
+            st.download_button("📥 Download Processed File", f, file_name=out_name)
+
