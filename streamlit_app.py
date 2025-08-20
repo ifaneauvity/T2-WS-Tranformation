@@ -4038,9 +4038,15 @@ elif transformation_choice == "30030021 合歡 ON":
         raw_extracted = pd.concat(parts, ignore_index=True)
 
         # ---------------- 2) Mappings (unique-only; prefer 30030021, then global) ----------------
-        cust_map = read_excel_safe(map_bytes, sheet_name="Customer Mapping", dtype=str, engine=map_eng)
-        sku_map  = read_excel_safe(map_bytes, sheet_name="SKU Mapping",    dtype=str, engine=map_eng)
+        # IMPORTANT: read with header=0 so column names exist
+        cust_map = read_excel_safe(map_bytes, sheet_name="Customer Mapping", dtype=str, header=0, engine=map_eng)
+        sku_map  = read_excel_safe(map_bytes, sheet_name="SKU Mapping",    dtype=str, header=0, engine=map_eng)
 
+        # normalize column labels (trim stray whitespace)
+        cust_map.columns = cust_map.columns.map(lambda x: str(x).strip())
+        sku_map.columns  = sku_map.columns.map(lambda x: str(x).strip())
+
+        # proceed with expected columns
         cust_map["ASI_CRM_Mapping_Cust_No__c"]   = cust_map["ASI_CRM_Mapping_Cust_No__c"].astype(str).str.replace(r"\.0$", "", regex=True)
         sku_map["ASI_CRM_Mapping_Cust_Code__c"] = sku_map["ASI_CRM_Mapping_Cust_Code__c"].astype(str).str.replace(r"\.0$", "", regex=True)
 
@@ -4103,4 +4109,5 @@ elif transformation_choice == "30030021 合歡 ON":
         final[export_cols].to_excel(out_name, index=False, header=False)
         with open(out_name, "rb") as f:
             st.download_button("📥 Download Processed File", f, file_name=out_name)
+
 
