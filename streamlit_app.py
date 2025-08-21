@@ -1550,15 +1550,17 @@ elif transformation_choice == "30010017 正興(振興)":
         cust_map["ASI_CRM_Offtake_Customer_No__c"] = cust_map["ASI_CRM_Offtake_Customer_No__c"].astype(str).str.strip()
         sku_map["ASI_CRM_Offtake_Product__c"] = sku_map["ASI_CRM_Offtake_Product__c"].astype(str).str.strip()
 
-        # Customer mapping: replace with JDE when available; otherwise keep original (do NOT drop rows)
+        # Customer mapping: replace with JDE when available; otherwise leave BLANK
         df_parsed = df_parsed.merge(
-            cust_map[["ASI_CRM_Offtake_Customer_No__c","ASI_CRM_JDE_Cust_No_Formula__c"]],
+            cust_map[["ASI_CRM_Offtake_Customer_No__c","ASI_CRM_JDE_Cust_No_Formula__c"]]
+                .drop_duplicates(subset="ASI_CRM_Offtake_Customer_No__c"),
             left_on="CustomerCode", right_on="ASI_CRM_Offtake_Customer_No__c", how="left"
         )
-        # use mapped JDE when present; else keep existing raw code
-        df_parsed["CustomerCode"] = df_parsed["ASI_CRM_JDE_Cust_No_Formula__c"].where(
-            df_parsed["ASI_CRM_JDE_Cust_No_Formula__c"].fillna("")
-            .astype(str).str.strip().str.replace(r"\.0$", "", regex=True))
+        df_parsed["CustomerCode"] = (
+            df_parsed["ASI_CRM_JDE_Cust_No_Formula__c"]
+            .fillna("")
+            .astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+        )
         df_parsed.drop(columns=["ASI_CRM_Offtake_Customer_No__c","ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
 
         # SKU mapping: fill PRT_Product_Code when available; else leave as NaN (do NOT force)
@@ -1592,6 +1594,7 @@ elif transformation_choice == "30010017 正興(振興)":
                 data=f,
                 file_name=output_filename
             )
+
 
 elif transformation_choice == "30010031 廣茂隆(八條)":
     import re
