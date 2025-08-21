@@ -1557,9 +1557,8 @@ elif transformation_choice == "30010017 正興(振興)":
         )
         # use mapped JDE when present; else keep existing raw code
         df_parsed["CustomerCode"] = df_parsed["ASI_CRM_JDE_Cust_No_Formula__c"].where(
-            df_parsed["ASI_CRM_JDE_Cust_No_Formula__c"].notna(),
-            df_parsed["CustomerCode"]
-        ).astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+            df_parsed["ASI_CRM_JDE_Cust_No_Formula__c"].fillna("")
+            .astype(str).str.strip().str.replace(r"\.0$", "", regex=True))
         df_parsed.drop(columns=["ASI_CRM_Offtake_Customer_No__c","ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
 
         # SKU mapping: fill PRT_Product_Code when available; else leave as NaN (do NOT force)
