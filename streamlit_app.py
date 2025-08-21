@@ -1664,10 +1664,11 @@ elif transformation_choice == "30010031 廣茂隆(八條)":
             cust_map[["ASI_CRM_Offtake_Customer_No__c","ASI_CRM_JDE_Cust_No_Formula__c"]],
             left_on="CustomerCode", right_on="ASI_CRM_Offtake_Customer_No__c", how="left"
         )
-        df["CustomerCode"] = df["ASI_CRM_JDE_Cust_No_Formula__c"].where(
-            df["ASI_CRM_JDE_Cust_No_Formula__c"].notna(), df["CustomerCode"]
-        ).astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
-        df.drop(columns=["ASI_CRM_Offtake_Customer_No__c","ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
+        df["CustomerCode"] = (
+            df["ASI_CRM_JDE_Cust_No_Formula__c"]
+            .fillna("")  # <- key change: no fallback to external code
+            .astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+        )
 
         # ---- SKU mapping (non-forced): fill PRT SKU when present, else leave NaN ----
         df = df.merge(
