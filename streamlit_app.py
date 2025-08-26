@@ -556,7 +556,7 @@ elif transformation_choice == "30010059 誠邦有限公司":
             right_on="ASI_CRM_Offtake_Customer_No__c",
             how="left"
         )
-        df_cleaned["Customer Code"] = df_cleaned["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.replace(r"\\.0$", "", regex=True)
+        df_cleaned["Customer Code"] = df_cleaned["ASI_CRM_JDE_Cust_No_Formula__c"].astype(int).astype(str)
         df_cleaned.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
 
         # SKU mapping
