@@ -550,15 +550,7 @@ elif transformation_choice == "30010059 誠邦有限公司":
             "ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"
         ]].drop_duplicates(subset="ASI_CRM_Offtake_Customer_No__c")
 
-        df_transformed = df_transformed.merge(
-            df_customer,
-            left_on="Customer Code",
-            right_on="ASI_CRM_Offtake_Customer_No__c",
-            how="left"
-        )
-
-        df_transformed["Customer Code"] = df_transformed["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.replace(r"\.0$", "", regex=True)
-        df_transformed.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
+        df_cleaned["Customer Code"] = df_cleaned["ASI_CRM_JDE_Cust_No_Formula__c"].astype(int).astype(str) df_cleaned.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
 
         # SKU mapping
         df_sku_mapping = dfs_mapping["SKU Mapping"]
@@ -585,8 +577,6 @@ elif transformation_choice == "30010059 誠邦有限公司":
         })
 
         df_final = pd.concat([fixed_df, df_cleaned], axis=1)
-        df_final["Customer Code"] = df_final["Customer Code"].astype(str).str.replace(r"\.0(?:[\s\u00A0\u2007\u202F\u3000]+)?$", "", regex=True)
-
         st.write("✅ Processed Data Preview:")     
 
         st.dataframe(df_final)
