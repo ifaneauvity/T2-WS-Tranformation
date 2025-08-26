@@ -592,6 +592,19 @@ elif transformation_choice == "30010059 誠邦有限公司":
         df_final = pd.concat([fixed_df, df_cleaned], axis=1)
 
         st.write("✅ Processed Data Preview:")
+      
+        def force_code(v):
+            if pd.isna(v):
+                return ""
+            s = str(v)
+            # kill NBSP / thin / full-width spaces, then trim
+            s = re.sub(r"[\u00A0\u2007\u202F\u3000]", "", s).strip()
+            # drop ONLY trailing .0 / .00... (keeps true decimals like 123.45)
+            s = re.sub(r"\.0+$", "", s)
+            return s
+        # Force clean + text dtype on the final frame
+        df_final["Customer Code"] = df_final["Customer Code"].map(force_code).astype("string")
+
         st.dataframe(df_final)
 
         output_filename = "processed_30010059.xlsx"
