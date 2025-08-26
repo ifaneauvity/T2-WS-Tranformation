@@ -605,7 +605,7 @@ elif transformation_choice == "30010059 誠邦有限公司":
         # Force clean + text dtype on the final frame
         df_final["Customer Code"] = df_final["Customer Code"].map(force_code).astype("string")
 
-        st.dataframe(df_final)
+        st.dataframe(df_final, column_config={"Customer Code": st.column_config.TextColumn()})
 
         output_filename = "processed_30010059.xlsx"
         df_final.to_excel(output_filename, index=False, header=False)
