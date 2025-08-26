@@ -543,27 +543,21 @@ elif transformation_choice == "30010059 誠邦有限公司":
             for sheet in pd.ExcelFile(mapping_file).sheet_names
         }
 
-        # Customer mapping
-        df_customer_mapping = dfs_mapping["Customer Mapping"]
-        df_customer_mapping = df_customer_mapping[[
-            "ASI_CRM_Offtake_Customer_No__c",
-            "ASI_CRM_JDE_Cust_No_Formula__c"
+      # Customer mapping
+        df_customer = dfs_mapping["Customer Mapping"]
+        df_customer = df_customer[[
+            "ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"
         ]].drop_duplicates(subset="ASI_CRM_Offtake_Customer_No__c")
 
-        df_cleaned = df_cleaned.merge(
-            df_customer_mapping,
+        df_transformed = df_transformed.merge(
+            df_customer,
             left_on="Customer Code",
             right_on="ASI_CRM_Offtake_Customer_No__c",
             how="left"
         )
-        df_cleaned["Customer Code"] = (
-            df_cleaned["ASI_CRM_JDE_Cust_No_Formula__c"]
-              .astype(str)
-              .str.replace(r"[\u00A0\u2007\u202F\u3000]", "", regex=True)  # kill NBSP & CJK spaces
-              .str.strip()
-              .str.replace(r"\.0+$", "", regex=True)  # drop any trailing .0 / .00 …
-        )
-        df_cleaned.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
+
+        df_transformed["Customer Code"] = df_transformed["ASI_CRM_JDE_Cust_No_Formula__c"].astype(str).str.replace(r"\.0$", "", regex=True)
+        df_transformed.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
 
         # SKU mapping
         df_sku_mapping = dfs_mapping["SKU Mapping"]
@@ -592,20 +586,9 @@ elif transformation_choice == "30010059 誠邦有限公司":
         df_final = pd.concat([fixed_df, df_cleaned], axis=1)
 
         st.write("✅ Processed Data Preview:")
-      
-        def force_code(v):
-            if pd.isna(v):
-                return ""
-            s = str(v)
-            # kill NBSP / thin / full-width spaces, then trim
-            s = re.sub(r"[\u00A0\u2007\u202F\u3000]", "", s).strip()
-            # drop ONLY trailing .0 / .00... (keeps true decimals like 123.45)
-            s = re.sub(r"\.0+$", "", s)
-            return s
-        # Force clean + text dtype on the final frame
-        df_final["Customer Code"] = df_final["Customer Code"].map(force_code).astype("string")
+       
 
-        st.dataframe(df_final, column_config={"Customer Code": st.column_config.TextColumn()})
+        st.dataframe(df_final)
 
         output_filename = "processed_30010059.xlsx"
         df_final.to_excel(output_filename, index=False, header=False)
