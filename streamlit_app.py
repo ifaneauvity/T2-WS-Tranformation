@@ -584,9 +584,9 @@ elif transformation_choice == "30010059 誠邦有限公司":
         })
 
         df_final = pd.concat([fixed_df, df_cleaned], axis=1)
+        df_final["Customer Code"] = df_final["Customer Code"].astype(str).str.replace(r"\.0(?:[\s\u00A0\u2007\u202F\u3000]+)?$", "", regex=True)
 
-        st.write("✅ Processed Data Preview:")
-       
+        st.write("✅ Processed Data Preview:")     
 
         st.dataframe(df_final)
 
