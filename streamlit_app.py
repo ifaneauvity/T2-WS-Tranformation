@@ -472,6 +472,17 @@ elif transformation_choice == "30010059 誠邦有限公司":
         import re
         import pandas as pd
 
+        # ---------- helpers ----------
+        def clean_code(series: pd.Series) -> pd.Series:
+            # Remove NBSP/full-width spaces, trim, then drop ONLY trailing ".0"/".00..."
+            return (
+                series.astype(str)
+                      .str.replace(r"[\u00A0\u2007\u202F\u3000]", "", regex=True)
+                      .str.strip()
+                      .str.replace(r"\.0+$", "", regex=True)
+            )
+
+        # ---------- read raw ----------
         raw_df = pd.read_excel(raw_data_file, sheet_name=0, header=None)
 
         # Step 1: Detect format A or B (based on column B content for first date match)
@@ -481,10 +492,7 @@ elif transformation_choice == "30010059 誠邦有限公司":
             col_a = str(row[0]).strip() if pd.notna(row[0]) else ""
             col_b = str(row[1]).strip() if pd.notna(row[1]) else ""
             if re.match(r"\d{4}/\d{2}/\d{2}|\d{3}/\d{2}/\d{2}", col_a):
-                if col_b.startswith("\u92b7"):  # 銷
-                    offset = 0  # Format A
-                else:
-                    offset = 1  # Format B
+                offset = 0 if col_b.startswith("\u92b7") else 1  # 銷
                 break
 
         # Step 2: Extract product transactions using appropriate offset
@@ -505,26 +513,26 @@ elif transformation_choice == "30010059 誠邦有限公司":
 
             # Match both 【】 and []
             if "貨品編號:" in col_a_clean:
-                match = re.search(r"貨品編號:\s*[\[\【]([^\]\】]+)[\]\】]\s*(.+)", col_a_clean)
-                if match:
-                    current_product_code = match.group(1).strip()
-                    current_product_name = match.group(2).strip()
+                m = re.search(r"貨品編號:\s*[\[\【]([^\]\】]+)[\]\】]\s*(.+)", col_a_clean)
+                if m:
+                    current_product_code = m.group(1).strip()
+                    current_product_name = m.group(2).strip()
                     found_first_product = True
                 continue
 
             if not found_first_product:
                 continue
 
-            if "合計" in col_a_clean or "小計" in col_a_clean:
+            if ("合計" in col_a_clean) or ("小計" in col_a_clean):
                 continue
 
             if col_c and isinstance(col_e, (int, float)) and current_product_code and current_product_name:
                 try:
-                    y, m, d = map(int, col_a_clean.split("/"))
+                    y, mth, d = map(int, col_a_clean.split("/"))
                     if y < 1911:
                         y += 1911
-                    gregorian_date = f"{y}{m:02d}{d:02d}"
-                except:
+                    gregorian_date = f"{y}{mth:02d}{d:02d}"
+                except Exception:
                     gregorian_date = col_a_clean
 
                 data.append([
@@ -538,23 +546,31 @@ elif transformation_choice == "30010059 誠邦有限公司":
             "Product Code", "Product Name", "Quantity"
         ])
 
-        # Load mapping file and merge
-        dfs_mapping = {
-            sheet: pd.read_excel(mapping_file, sheet_name=sheet)
-            for sheet in pd.ExcelFile(mapping_file).sheet_names
-        }
+        # ---------- load mappings ----------
+        xlsx = pd.ExcelFile(mapping_file)
+        dfs_mapping = {sheet: pd.read_excel(mapping_file, sheet_name=sheet) for sheet in xlsx.sheet_names}
 
-      # Customer mapping
-        df_customer = dfs_mapping["Customer Mapping"]
-        df_customer = df_customer[[
+        # Customer mapping (merge FIRST, then rewrite "Customer Code")
+        df_customer = dfs_mapping["Customer Mapping"][[
             "ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"
         ]].drop_duplicates(subset="ASI_CRM_Offtake_Customer_No__c")
 
-        df_cleaned["Customer Code"] = df_cleaned["ASI_CRM_JDE_Cust_No_Formula__c"].astype(int).astype(str) df_cleaned.drop(columns=["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"], inplace=True)
+        df_cleaned = df_cleaned.merge(
+            df_customer,
+            left_on="Customer Code",
+            right_on="ASI_CRM_Offtake_Customer_No__c",
+            how="left"
+        )
+
+        # Replace Customer Code with mapped JDE code, removing any trailing ".0"
+        df_cleaned["Customer Code"] = clean_code(df_cleaned["ASI_CRM_JDE_Cust_No_Formula__c"])
+        df_cleaned.drop(
+            columns=["ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c"],
+            inplace=True
+        )
 
         # SKU mapping
-        df_sku_mapping = dfs_mapping["SKU Mapping"]
-        df_sku_mapping = df_sku_mapping[[
+        df_sku_mapping = dfs_mapping["SKU Mapping"][[
             "ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"
         ]].drop_duplicates(subset="ASI_CRM_Offtake_Product__c")
 
@@ -564,11 +580,16 @@ elif transformation_choice == "30010059 誠邦有限公司":
             right_on="ASI_CRM_Offtake_Product__c",
             how="left"
         )
+
         product_index = df_cleaned.columns.get_loc("Product Code")
-        df_cleaned.insert(product_index, "PRT Product Code", df_cleaned["ASI_CRM_SKU_Code__c"].astype(str).str.strip())
+        df_cleaned.insert(
+            product_index,
+            "PRT Product Code",
+            clean_code(df_cleaned["ASI_CRM_SKU_Code__c"])
+        )
         df_cleaned.drop(columns=["ASI_CRM_Offtake_Product__c", "ASI_CRM_SKU_Code__c"], inplace=True)
 
-        # Add fixed columns
+        # ---------- fixed columns + final ----------
         fixed_df = pd.DataFrame({
             "Column1": ["INV"] * len(df_cleaned),
             "Column2": ["U"] * len(df_cleaned),
@@ -577,8 +598,11 @@ elif transformation_choice == "30010059 誠邦有限公司":
         })
 
         df_final = pd.concat([fixed_df, df_cleaned], axis=1)
-        st.write("✅ Processed Data Preview:")     
 
+        # Belt-and-suspenders: ensure Customer Code is clean text
+        df_final["Customer Code"] = clean_code(df_final["Customer Code"]).astype("string")
+
+        st.write("✅ Processed Data Preview:")
         st.dataframe(df_final)
 
         output_filename = "processed_30010059.xlsx"
@@ -586,6 +610,7 @@ elif transformation_choice == "30010059 誠邦有限公司":
 
         with open(output_filename, "rb") as f:
             st.download_button(label="📅 Download Processed File", data=f, file_name=output_filename)
+
 
 
 elif transformation_choice == "30010315 圳程":
