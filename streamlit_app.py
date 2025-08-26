@@ -3,12 +3,9 @@ import pandas as pd
 import re
 
 # Streamlit app title
-st.title("📊 WS Transformation")
+st.title("📊 T2 WS Transformation")
 st.write("Upload an Excel file and choose the transformation format.")
 
-mapping_file = st.session_state.get("mapping_file") or st.file_uploader("Upload Mapping File", type=["xlsx"], key="new_mapping")
-if mapping_file:
-    st.session_state["mapping_file"] = mapping_file
 
 # Select transformation format
 transformation_choice = st.selectbox("Select Transformation Format:", ["30010085 宏酒樽 (夜)", "30010203 宏酒樽 (日)", "30010061 向日葵", "30010010 酒倉盛豐行", "30010013 酒田", "30010059 誠邦有限公司", "30010315 圳程", "30030088 九久", "30020145 鏵錡", "30010199 振泰 OFF", "30010176 振泰 ON", "30030094 和易 ON", "33001422 和易 OFF"
