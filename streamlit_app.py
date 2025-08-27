@@ -3,7 +3,7 @@ import pandas as pd
 import re
 
 # Streamlit app title
-st.title("📊 T2 WS Transformations")
+st.title("📊 T2 WS Transformation")
 st.write("Upload an Excel file and choose the transformation format.")
 
 
@@ -12,10 +12,6 @@ transformation_choice = st.selectbox("Select Transformation Format:", ["30010085
                                                                       , "30010017 正興(振興)", "30010031 廣茂隆(八條)", "30020016 日嵩", "30020027 榮好(實儀)", "30020180 暐倫 OFF", "30020203 玄星 OFF", "30020216 久悅貿易", "30030061 合歡 OFF", "30030076 裕陞（分月）", "30010008 利多吉", "30010154 亨玖", "30010185 瑞星翰德(夜點)"
                                                                       , "30010316 大倉捷", "30020076 酒國英豪", "30030021 合歡 ON", "30030083 東瀛", "30030084 華恩", "30030106 明輝"])
 
-# ✅ Only one mapping file uploader, persists via session_state
-mapping_file = st.session_state.get("mapping_file") or st.file_uploader("Upload Mapping File", type=["xlsx"], key="new_mapping")
-if mapping_file:
-    st.session_state["mapping_file"] = mapping_file
 
 if transformation_choice == "30010085 宏酒樽 (夜)":
     raw_data_file = st.file_uploader("Upload Raw Sales Data", type=["xlsx"], key="new_raw")
