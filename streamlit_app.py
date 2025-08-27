@@ -1,9 +1,74 @@
 import streamlit as st
 import pandas as pd
 import re
+import os, io
+import streamlit as st
+
+# ---------- Persist across reruns (optional) ----------
+_PERSIST_PATH = "data/mapping.xlsx"
+
+# preload saved mapping once per session
+if "_mapping_init" not in st.session_state:
+    if os.path.exists(_PERSIST_PATH):
+        with open(_PERSIST_PATH, "rb") as f:
+            st.session_state["_mapping_bytes"] = f.read()
+            st.session_state["_mapping_name"] = "mapping.xlsx"
+            st.session_state["_have_mapping"] = True
+    st.session_state["_mapping_init"] = True
+
+# sidebar controls
+with st.sidebar:
+    st.checkbox("Remember mapping between runs", value=True, key="_persist_mapping")
+    if st.button("Clear saved mapping"):
+        st.session_state.pop("_mapping_bytes", None)
+        st.session_state.pop("_mapping_name", None)
+        st.session_state["_have_mapping"] = False
+        try:
+            os.remove(_PERSIST_PATH)
+        except FileNotFoundError:
+            pass
+        st.success("Cleared saved mapping.")
+
+# ---------- Monkey patch ----------
+_orig_file_uploader = st.file_uploader
+
+class _MemoryUpload(io.BytesIO):
+    def __init__(self, data: bytes, name="mapping.xlsx",
+                 type_="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"):
+        super().__init__(data)
+        self.name = name
+        self.type = type_
+        self.size = len(data)
+
+def _file_uploader_with_memory(label, *args, **kwargs):
+    key = kwargs.get("key", "")
+    is_mapping = ("mapping" in str(label).lower()) or ("mapping" in str(key).lower())
+
+    up = _orig_file_uploader(label, *args, **kwargs)
+
+    # If this is the mapping uploader and a new file arrived: save + (optionally) persist
+    if is_mapping and up is not None:
+        data = up.read()
+        st.session_state["_mapping_bytes"] = data
+        st.session_state["_mapping_name"] = getattr(up, "name", "mapping.xlsx")
+        st.session_state["_have_mapping"] = True
+        if st.session_state.get("_persist_mapping", False):
+            os.makedirs(os.path.dirname(_PERSIST_PATH), exist_ok=True)
+            with open(_PERSIST_PATH, "wb") as f:
+                f.write(data)
+        return _MemoryUpload(st.session_state["_mapping_bytes"], name=st.session_state["_mapping_name"])
+
+    # If this is the mapping uploader and nothing was uploaded this run, but we have it cached: return it
+    if is_mapping and st.session_state.get("_have_mapping"):
+        return _MemoryUpload(st.session_state["_mapping_bytes"], name=st.session_state.get("_mapping_name", "mapping.xlsx"))
+
+    # Otherwise, behave like normal
+    return up
+
+st.file_uploader = _file_uploader_with_memory
 
 # Streamlit app title
-st.title("📊 T2 WS Transformation")
+st.title("📊 T2 WS Transformations")
 st.write("Upload an Excel file and choose the transformation format.")
 
 
