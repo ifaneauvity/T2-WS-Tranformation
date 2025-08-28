@@ -74,7 +74,7 @@ st.write("Upload an Excel file and choose the transformation format.")
 
 # Select transformation format
 transformation_choice = st.selectbox("Select Transformation Format:", ["30010008 利多吉", "30010010 酒倉盛豐行", "30010013 酒田", "30010017 正興(振興)", "30010031 廣茂隆(八條)", "30010059 誠邦有限公司", "30010061 向日葵", "30010085 宏酒樽 (夜)", "30010154 亨玖", 
-                                                                       "30010176 振泰 ON", "30010185 瑞星翰德(夜點)", "30010199 振泰 OFF", "30010203 宏酒樽 (日)", "30010315 圳程", "30010316 大倉捷", "30020016 日嵩", "30020023 松勇ON", "30020027 榮好(實儀)", "30020076 酒國英豪", 
+                                                                       "30010176 振泰 ON", "30010185 瑞星翰德(夜點)", "30010199 振泰 OFF", "30010203 宏酒樽 (日)", "30010225 連大立", "30010315 圳程", "30010316 大倉捷", "30020016 日嵩", "30020023 松勇ON", "30020027 榮好(實儀)", "30020076 酒國英豪", 
                                                                        "30020145 鏵錡", "30020177 富為MM(甲揚)", "30020180 暐倫 OFF", "30020203 玄星 OFF", "30020216 久悅貿易", "30030010 信禕", "30030021 合歡 ON", "30030061 合歡 OFF", "30030076 裕陞（分月）", "30030083 東瀛", "30030084 華恩", "30030088 九久", 
                                                                        "30030094 和易 ON","30030105 上景", "30030106 明輝", "33001422 和易 OFF"])
 
@@ -5588,6 +5588,224 @@ elif transformation_choice == "30020023 松勇ON":
         st.dataframe(final.head(20))
 
         out_name = "30020023_松勇ON_transformation.xlsx"
+        export_cols = ["Type","Action","GroupCode","GroupName",
+                       "Customer Code","Customer Name","Date",
+                       "PRT Product Code","Product Code","Product Name","Number of Bottles"]
+        final[export_cols].to_excel(out_name, index=False, header=False)
+        with open(out_name, "rb") as f:
+            st.download_button("📥 Download Processed File", f, file_name=out_name)
+            
+elif transformation_choice == "30010225 連大立":
+
+    # ---- Uploaders (allow .xls / .xlsx) ----
+    raw_data_file = st.file_uploader("Upload Raw Sales Data (.xls/.xlsx)", type=["xls", "xlsx"], key="liandali_raw")
+    mapping_file  = st.file_uploader("Upload Mapping File (.xls/.xlsx)",  type=["xls", "xlsx"], key="liandali_map")
+
+    if raw_data_file is not None and mapping_file is not None:
+        # ---------------- Engine helpers (robust for xls/xlsx & odd filenames) ----------------
+        def pick_engine(uploaded):
+            name = (uploaded.name or "").lower()
+            if name.endswith(".xlsx") or ".xlsx" in name:
+                return "openpyxl"   # ensure xlsx doesn't hit xlrd
+            if name.endswith(".xls"):
+                return "xlrd"
+            return None  # let pandas choose
+
+        def to_buffer(uploaded_file):
+            data = uploaded_file.read()
+            return data, BytesIO(data)
+
+        def read_excel_safe(buf_bytes, sheet_name=0, header=None, engine=None, **kwargs):
+            try:
+                return pd.read_excel(BytesIO(buf_bytes), sheet_name=sheet_name, header=header, engine=engine, **kwargs)
+            except Exception:
+                try:
+                    return pd.read_excel(BytesIO(buf_bytes), sheet_name=sheet_name, header=header, **kwargs)
+                except Exception:
+                    alt = "openpyxl" if engine == "xlrd" else "xlrd"
+                    return pd.read_excel(BytesIO(buf_bytes), sheet_name=sheet_name, header=header, engine=alt, **kwargs)
+
+        def excel_file_safe(buf_bytes, engine=None):
+            try:
+                return pd.ExcelFile(BytesIO(buf_bytes), engine=engine)
+            except Exception:
+                try:
+                    return pd.ExcelFile(BytesIO(buf_bytes))
+                except Exception:
+                    alt = "openpyxl" if engine == "xlrd" else "xlrd"
+                    return pd.ExcelFile(BytesIO(buf_bytes), engine=alt)
+
+        raw_eng = pick_engine(raw_data_file)
+        map_eng = pick_engine(mapping_file)
+        raw_bytes, _ = to_buffer(raw_data_file)
+        map_bytes, _  = to_buffer(mapping_file)
+
+        # ---------------- 1) Load raw (prefer sheet named "4", else first sheet) ----------------
+        xls = excel_file_safe(raw_bytes, engine=raw_eng)
+        sheet_name = None
+        for sn in xls.sheet_names:
+            if str(sn).strip() == "4":
+                sheet_name = sn
+                break
+        if sheet_name is None:
+            sheet_name = xls.sheet_names[0]
+
+        df0 = read_excel_safe(raw_bytes, sheet_name=sheet_name, header=None, engine=raw_eng)
+
+        # ---------------- 2) Extract end date from banner like "14/07/01 - 14/07/31" or "114/07/01 - 114/07/31" ----------------
+        def parse_end_date_from_banner(df):
+            # scan first ~15 rows, first ~6 columns
+            for r in range(min(15, len(df))):
+                for c in range(min(6, df.shape[1])):
+                    txt = str(df.iat[r, c]).strip() if pd.notna(df.iat[r, c]) else ""
+                    m = re.search(r'(\d{2,3})/(\d{2})/(\d{2})\s*-\s*(\d{2,3})/(\d{2})/(\d{2})', txt)
+                    if m:
+                        y2, mm2, dd2 = m.group(4), m.group(5), m.group(6)
+                        yy = int(y2)
+                        if len(y2) == 3:   # Minguo year
+                            year = yy + 1911
+                        else:              # two-digit year -> assume 2000s
+                            year = 2000 + yy
+                        return f"{year:04d}{int(mm2):02d}{int(dd2):02d}"
+                # join col0 + col1 if banner is split
+                t0 = str(df.iat[r, 0]).strip() if pd.notna(df.iat[r, 0]) else ""
+                t1 = str(df.iat[r, 1]).strip() if pd.notna(df.iat[r, 1]) else ""
+                joined = f"{t0} {t1}".strip()
+                m = re.search(r'(\d{2,3})/(\d{2})/(\d{2})\s*-\s*(\d{2,3})/(\d{2})/(\d{2})', joined)
+                if m:
+                    y2, mm2, dd2 = m.group(4), m.group(5), m.group(6)
+                    yy = int(y2)
+                    if len(y2) == 3:
+                        year = yy + 1911
+                    else:
+                        year = 2000 + yy
+                    return f"{year:04d}{int(mm2):02d}{int(dd2):02d}"
+            return ""  # leave blank if not found
+
+        date_end = parse_end_date_from_banner(df0)
+
+        # ---------------- 3) Parse product blocks & transactional rows ----------------
+        def parse_pair_to_bottles(s):
+            # "箱數/瓶數" pair -> take bottles (the second number)
+            s = str(s).strip()
+            m = re.match(r'(\d+)\s*/\s*(\d+)', s)
+            if not m:
+                return 0
+            return int(m.group(2))
+
+        records = []
+        current_prod_code = ""
+        current_prod_name = ""
+
+        for r in range(len(df0)):
+            c0  = str(df0.iat[r, 0]).strip()  if pd.notna(df0.iat[r, 0]) else ""
+            c1  = str(df0.iat[r, 1]).strip()  if pd.notna(df0.iat[r, 1]) else ""
+            c2  = str(df0.iat[r, 2]).strip()  if pd.notna(df0.iat[r, 2]) else ""
+            c7  = str(df0.iat[r, 7]).strip()  if pd.notna(df0.iat[r, 7]) else ""  # 客戶代號
+            c8  = str(df0.iat[r, 8]).strip()  if pd.notna(df0.iat[r, 8]) else ""  # 客戶名稱
+            c9  = str(df0.iat[r, 9]).strip()  if pd.notna(df0.iat[r, 9]) else ""  # 銷售數量 pair a/b
+            c10 = str(df0.iat[r,10]).strip()  if pd.notna(df0.iat[r,10]) else ""  # 銷退數量 pair a/b
+
+            # Product header row: code in col0 (numeric), name in col1, spec in col2
+            if re.match(r'^\d{6,}$', c0) and c1 and c2:
+                current_prod_code = c0
+                current_prod_name = c1  # keep simple; spec (c2) optional
+                continue
+
+            # Customer transactional row: has customer code & name; quantities appear as "a/b"
+            if c7 and c8 and ("/" in c9 or "/" in c10):
+                sales_bottles   = parse_pair_to_bottles(c9) if "/" in c9 else 0
+                returns_bottles = parse_pair_to_bottles(c10) if "/" in c10 else 0
+                net = sales_bottles - returns_bottles
+                if net == 0:
+                    continue
+                records.append({
+                    "CustomerCode_ext": c7,
+                    "CustomerName": c8,
+                    "Date": date_end,              # leave blank if no banner found
+                    "ProductCode": current_prod_code,
+                    "ProductName": current_prod_name,
+                    "Quantity": int(net)
+                })
+
+        raw_df = pd.DataFrame(records)
+        if raw_df.empty:
+            st.error("No transactional rows parsed from the raw file.")
+            st.stop()
+
+        # ---------------- 4) Load mappings (unique-only; BLANK if unmapped) ----------------
+        cust_map = read_excel_safe(map_bytes, sheet_name="Customer Mapping", dtype=str, header=0, engine=map_eng)
+        sku_map  = read_excel_safe(map_bytes, sheet_name="SKU Mapping",    dtype=str, header=0, engine=map_eng)
+
+        cust_map.columns = cust_map.columns.map(str)
+        sku_map.columns  = sku_map.columns.map(str)
+
+        group_code = "30010225"
+        group_name = "連大立"
+
+        cust_map["ASI_CRM_Mapping_Cust_No__c"]   = cust_map["ASI_CRM_Mapping_Cust_No__c"].astype(str).str.replace(r"\.0$","", regex=True)
+        sku_map["ASI_CRM_Mapping_Cust_Code__c"] = sku_map["ASI_CRM_Mapping_Cust_Code__c"].astype(str).str.replace(r"\.0$","", regex=True)
+
+        cust_f = cust_map[cust_map["ASI_CRM_Mapping_Cust_No__c"] == group_code].copy()
+        sku_f  = sku_map[ sku_map["ASI_CRM_Mapping_Cust_Code__c"] == group_code].copy()
+
+        def unique_only_map(dfm, key_col, val_col, normalize=lambda s: s):
+            tmp = dfm[[key_col, val_col]].dropna().copy()
+            tmp["key"] = tmp[key_col].astype(str).map(normalize)
+            tmp["val"] = tmp[val_col].astype(str).str.strip()
+            counts = tmp.groupby("key")["val"].nunique().reset_index(name="n")
+            uniq = set(counts[counts["n"] == 1]["key"])
+            tmp = tmp[tmp["key"].isin(uniq)].drop_duplicates(subset="key", keep="first")
+            return dict(zip(tmp["key"], tmp["val"]))
+
+        def norm_code(s): return str(s).strip().upper().replace(" ", "").replace(".0","")
+        def norm_sku(s):  return str(s).strip().upper()
+
+        m_cust_f = unique_only_map(cust_f,  "ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c", norm_code)
+        m_cust_g = unique_only_map(cust_map,"ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c", norm_code)
+        m_sku_f  = unique_only_map(sku_f,   "ASI_CRM_Offtake_Product__c",     "ASI_CRM_SKU_Code__c",            norm_sku)
+        m_sku_g  = unique_only_map(sku_map, "ASI_CRM_Offtake_Product__c",     "ASI_CRM_SKU_Code__c",            norm_sku)
+
+        df1 = raw_df.copy()
+        df1["CustomerCode_norm"] = df1["CustomerCode_ext"].map(norm_code)
+        df1["Customer Code"] = df1["CustomerCode_norm"].map(m_cust_f).fillna(
+                                  df1["CustomerCode_norm"].map(m_cust_g)
+                               ).fillna("")  # BLANK if still unmapped
+
+        df1["ProductCode_norm"] = df1["ProductCode"].map(norm_sku)
+        df1["PRT Product Code"] = df1["ProductCode_norm"].map(m_sku_f).fillna(
+                                     df1["ProductCode_norm"].map(m_sku_g)
+                                  ).fillna("")  # BLANK if unmapped
+
+        # ---------------- 5) Assemble final & aggregate duplicates ----------------
+        final = pd.DataFrame({
+            "Type": "INV",
+            "Action": "U",
+            "GroupCode": group_code,
+            "GroupName": group_name,
+            "Customer Code": df1["Customer Code"],
+            "Customer Name": df1["CustomerName"],
+            "Date": df1["Date"],  # may be blank if banner not found
+            "PRT Product Code": df1["PRT Product Code"],
+            "Product Code": df1["ProductCode_norm"],
+            "Product Name": df1["ProductName"],
+            "Number of Bottles": df1["Quantity"].astype(int)
+        })
+
+        final = final.groupby(
+            ["Type","Action","GroupCode","GroupName",
+             "Customer Code","Customer Name","Date",
+             "PRT Product Code","Product Code","Product Name"],
+            as_index=False
+        )["Number of Bottles"].sum().sort_values(
+            ["Date","Product Code","Customer Name"]
+        ).reset_index(drop=True)
+
+        # ---------------- 6) UI ----------------
+        st.write("✅ Processed Data Preview (first 25 rows):")
+        st.dataframe(final.head(25))
+
+        out_name = "30010225_連大立_transformation.xlsx"
         export_cols = ["Type","Action","GroupCode","GroupName",
                        "Customer Code","Customer Name","Date",
                        "PRT Product Code","Product Code","Product Name","Number of Bottles"]
