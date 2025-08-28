@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import re
 import os, io
+from io import BytesIO
 
 # ---------- Persist across reruns (optional) ----------
 _PERSIST_PATH = "data/mapping.xlsx"
