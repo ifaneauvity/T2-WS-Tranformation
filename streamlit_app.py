@@ -74,7 +74,7 @@ st.write("Upload an Excel file and choose the transformation format.")
 # Select transformation format
 transformation_choice = st.selectbox("Select Transformation Format:", ["30010008 利多吉", "30010010 酒倉盛豐行", "30010013 酒田", "30010017 正興(振興)", "30010031 廣茂隆(八條)", "30010059 誠邦有限公司", "30010061 向日葵", "30010085 宏酒樽 (夜)", "30010154 亨玖", 
                                                                        "30010176 振泰 ON", "30010185 瑞星翰德(夜點)", "30010199 振泰 OFF", "30010203 宏酒樽 (日)", "30010315 圳程", "30010316 大倉捷", "30020016 日嵩", "30020027 榮好(實儀)", "30020076 酒國英豪", 
-                                                                       "30020145 鏵錡", "30020180 暐倫 OFF", "30020203 玄星 OFF", "30020216 久悅貿易", "30030021 合歡 ON", "30030061 合歡 OFF", "30030076 裕陞（分月）", "30030083 東瀛", "30030084 華恩", "30030088 九久", 
+                                                                       "30020145 鏵錡", "30020177 富為MM(甲揚)", "30020180 暐倫 OFF", "30020203 玄星 OFF", "30020216 久悅貿易", "30030021 合歡 ON", "30030061 合歡 OFF", "30030076 裕陞（分月）", "30030083 東瀛", "30030084 華恩", "30030088 九久", 
                                                                        "30030094 和易 ON","30030105 上景", "30030106 明輝", "33001422 和易 OFF"])
 
 
@@ -4840,11 +4840,6 @@ elif transformation_choice == "30030106 明輝":
         with open(out_name, "rb") as f:
             st.download_button("📥 Download Processed File", f, file_name=out_name)
 elif transformation_choice == "30030105 上景":
-    import re
-    import pandas as pd
-    import streamlit as st
-    from io import BytesIO
-
     # ---- Uploaders (allow .xls / .xlsx) ----
     raw_data_file = st.file_uploader("Upload Raw Sales Data (.xls/.xlsx)", type=["xls", "xlsx"], key="shangjing_raw")
     mapping_file  = st.file_uploader("Upload Mapping File (.xls/.xlsx)",  type=["xls", "xlsx"], key="shangjing_map")
@@ -5031,3 +5026,192 @@ elif transformation_choice == "30030105 上景":
         with open(out_name, "rb") as f:
             st.download_button("📥 Download Processed File", f, file_name=out_name)
 
+elif transformation_choice == "30020177 富為MM(甲揚)":
+    # ---- Uploaders (allow .xls / .xlsx) ----
+    raw_data_file = st.file_uploader("Upload Raw Sales Data (.xls/.xlsx)", type=["xls", "xlsx"], key="fu_wei_raw")
+    mapping_file  = st.file_uploader("Upload Mapping File (.xls/.xlsx)",  type=["xls", "xlsx"], key="fu_wei_map")
+
+    if raw_data_file is not None and mapping_file is not None:
+        # ---------------- Engine helpers (robust for xls/xlsx & odd filenames) ----------------
+        def pick_engine(uploaded):
+            name = (uploaded.name or "").lower()
+            if name.endswith(".xlsx") or ".xlsx" in name:
+                return "openpyxl"   # force openpyxl for any .xlsx (even names like .xls.xlsx)
+            if name.endswith(".xls"):
+                return "xlrd"
+            return None  # let pandas choose
+
+        def to_buffer(uploaded_file):
+            data = uploaded_file.read()
+            return data, BytesIO(data)
+
+        def read_excel_safe(buf_bytes, sheet_name=0, header=None, engine=None, **kwargs):
+            try:
+                return pd.read_excel(BytesIO(buf_bytes), sheet_name=sheet_name, header=header, engine=engine, **kwargs)
+            except Exception:
+                try:
+                    return pd.read_excel(BytesIO(buf_bytes), sheet_name=sheet_name, header=header, **kwargs)
+                except Exception:
+                    alt = "openpyxl" if engine == "xlrd" else "xlrd"
+                    return pd.read_excel(BytesIO(buf_bytes), sheet_name=sheet_name, header=header, engine=alt, **kwargs)
+
+        def excel_file_safe(buf_bytes, engine=None):
+            try:
+                return pd.ExcelFile(BytesIO(buf_bytes), engine=engine)
+            except Exception:
+                try:
+                    return pd.ExcelFile(BytesIO(buf_bytes))
+                except Exception:
+                    alt = "openpyxl" if engine == "xlrd" else "xlrd"
+                    return pd.ExcelFile(BytesIO(buf_bytes), engine=alt)
+
+        raw_eng = pick_engine(raw_data_file)
+        map_eng = pick_engine(mapping_file)
+        raw_bytes, _ = to_buffer(raw_data_file)
+        map_bytes, _  = to_buffer(mapping_file)
+
+        # ---------------- 1) Load raw (sheet '大盤大 (02)' or first) ----------------
+        xls = excel_file_safe(raw_bytes, engine=raw_eng)
+        sheet_name = None
+        for sn in xls.sheet_names:
+            if str(sn).strip() == "大盤大 (02)":
+                sheet_name = sn
+                break
+        if sheet_name is None:
+            sheet_name = xls.sheet_names[0]
+
+        df0 = read_excel_safe(raw_bytes, sheet_name=sheet_name, header=None, engine=raw_eng)
+
+        # Find header row dynamically (row containing these tokens)
+        hdr_row = None
+        for i in range(min(20, len(df0))):
+            row = [str(x).strip() if pd.notna(x) else "" for x in df0.iloc[i].tolist()]
+            if ("單據日期" in row) and ("客戶編號" in row) and ("貨品編號" in row) and ("貨品名稱" in row):
+                hdr_row = i
+                break
+        if hdr_row is None:
+            hdr_row = 5  # fallback seen in sample
+
+        hdr = df0.iloc[hdr_row].tolist()
+        df = df0.iloc[hdr_row+1:].copy()
+        df.columns = hdr
+
+        # ---------------- 2) Normalize + keep valid rows ----------------
+        rename = {
+            "單據日期": "Date",
+            "單據編號": "DocNo",
+            "客戶編號": "CustomerCode_ext",
+            "客戶名稱": "CustomerName",
+            "貨品編號": "ProductCode",
+            "貨品名稱": "ProductName",
+            "單位": "Unit",
+            "數量": "Quantity",
+            "單價": "UnitPrice",
+            "小計": "Subtotal",
+            "總計金額": "Total",
+            "附註": "Note"
+        }
+        df = df.rename(columns=rename)
+
+        # Only rows with a date and quantity
+        df = df[~df["Date"].isna()].copy()
+        df["Quantity"] = pd.to_numeric(df["Quantity"], errors="coerce").fillna(0).astype(int)
+        df = df[df["Quantity"] != 0].copy()
+
+        # Gregorian date -> YYYYMMDD
+        def to_ymd(s):
+            s = "" if s is None else str(s).strip()
+            m = re.match(r"^(\d{4})/(\d{2})/(\d{2})$", s)
+            if not m:
+                return ""
+            return f"{int(m.group(1)):04d}{int(m.group(2)):02d}{int(m.group(3)):02d}"
+        df["Date"] = df["Date"].apply(to_ymd)
+
+        # Returns detection via DocNo containing '退'
+        def signed_qty(row):
+            q = int(row["Quantity"])
+            doc = str(row.get("DocNo", ""))
+            if "退" in doc:  # e.g., 銷退貨...
+                return -abs(q)
+            return q
+        df["Quantity"] = df.apply(signed_qty, axis=1)
+
+        # ---------------- 3) Load mappings ----------------
+        cust_map = read_excel_safe(map_bytes, sheet_name="Customer Mapping", dtype=str, header=0, engine=map_eng)
+        sku_map  = read_excel_safe(map_bytes, sheet_name="SKU Mapping",    dtype=str, header=0, engine=map_eng)
+
+        cust_map.columns = cust_map.columns.map(str)
+        sku_map.columns  = sku_map.columns.map(str)
+        cust_map["ASI_CRM_Mapping_Cust_No__c"]   = cust_map["ASI_CRM_Mapping_Cust_No__c"].astype(str).str.replace(r"\.0$", "", regex=True)
+        sku_map["ASI_CRM_Mapping_Cust_Code__c"] = sku_map["ASI_CRM_Mapping_Cust_Code__c"].astype(str).str.replace(r"\.0$", "", regex=True)
+
+        group_code = "30020177"
+        group_name = "富為MM(甲揚)"
+
+        cust_f = cust_map[cust_map["ASI_CRM_Mapping_Cust_No__c"] == group_code].copy()
+        sku_f  = sku_map[ sku_map["ASI_CRM_Mapping_Cust_Code__c"] == group_code].copy()
+
+        # Unique-only dictionaries
+        def unique_only_map(dfm, key_col, val_col, normalize=lambda s: s):
+            tmp = dfm[[key_col, val_col]].dropna().copy()
+            tmp["key"] = tmp[key_col].astype(str).map(normalize)
+            tmp["val"] = tmp[val_col].astype(str).str.strip()
+            counts = tmp.groupby("key")["val"].nunique().reset_index(name="n")
+            uniq = set(counts[counts["n"] == 1]["key"])
+            tmp = tmp[tmp["key"].isin(uniq)].drop_duplicates(subset="key", keep="first")
+            return dict(zip(tmp["key"], tmp["val"]))
+
+        norm_code = lambda s: str(s).strip().upper().replace(" ", "").replace(".0", "")
+        norm_sku  = lambda s: str(s).strip().upper()
+
+        m_cust_f = unique_only_map(cust_f,  "ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c", norm_code)
+        m_cust_g = unique_only_map(cust_map,"ASI_CRM_Offtake_Customer_No__c", "ASI_CRM_JDE_Cust_No_Formula__c", norm_code)
+        m_sku_f  = unique_only_map(sku_f,   "ASI_CRM_Offtake_Product__c",     "ASI_CRM_SKU_Code__c",            norm_sku)
+        m_sku_g  = unique_only_map(sku_map, "ASI_CRM_Offtake_Product__c",     "ASI_CRM_SKU_Code__c",            norm_sku)
+
+        # ---------------- 4) Apply mapping (non-forced; blank if unmapped) ----------------
+        df["CustomerCode_norm"] = df["CustomerCode_ext"].map(norm_code)
+        df["Customer Code"] = df["CustomerCode_norm"].map(m_cust_f).fillna(
+                                df["CustomerCode_norm"].map(m_cust_g)
+                              ).fillna("")
+
+        df["ProductCode_norm"] = df["ProductCode"].map(norm_sku)
+        df["PRT Product Code"] = df["ProductCode_norm"].map(m_sku_f).fillna(
+                                   df["ProductCode_norm"].map(m_sku_g)
+                                 ).fillna("")
+
+        # ---------------- 5) Assemble final & aggregate duplicates ----------------
+        final = pd.DataFrame({
+            "Type": "INV",
+            "Action": "U",
+            "GroupCode": group_code,
+            "GroupName": group_name,
+            "Customer Code": df["Customer Code"],
+            "Customer Name": df["CustomerName"],
+            "Date": df["Date"],
+            "PRT Product Code": df["PRT Product Code"],
+            "Product Code": df["ProductCode_norm"],
+            "Product Name": df["ProductName"],
+            "Number of Bottles": df["Quantity"].astype(int),
+        })
+
+        final = final.groupby(
+            ["Type","Action","GroupCode","GroupName",
+             "Customer Code","Customer Name","Date",
+             "PRT Product Code","Product Code","Product Name"],
+            as_index=False
+        )["Number of Bottles"].sum().sort_values(
+            ["Date","Product Code","Customer Name"]
+        ).reset_index(drop=True)
+
+        # ---------------- 6) UI ----------------
+        st.write("✅ Processed Data Preview (first 20 rows):")
+        st.dataframe(final.head(20))
+
+        out_name = "30020177_富為MM(甲揚)_transformation.xlsx"
+        export_cols = ["Type","Action","GroupCode","GroupName",
+                       "Customer Code","Customer Name","Date",
+                       "PRT Product Code","Product Code","Product Name","Number of Bottles"]
+        final[export_cols].to_excel(out_name, index=False, header=False)
+        with open(out_name, "rb") as f:
+            st.download_button("📥 Download Processed File", f, file_name=out_name)
