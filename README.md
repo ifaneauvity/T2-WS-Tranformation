@@ -27,9 +27,11 @@ Download the transformed Excel ready for integration into reporting systems
 🖥️ How It Works
 
 File Upload:
+
 Users drag and drop raw outlet data and (optionally) a mapping file into the app.
 
 Template Selection:
+
 A dropdown allows users to select the outlet code (e.g. 30010008 酒甕, 30010013 酒田, 30010315 圳程, etc.).
 Each code triggers a custom transformation pipeline written in Python.
 
@@ -50,10 +52,15 @@ Output Generation:
 Once processed, the cleaned dataset is displayed in-app and can be downloaded as an Excel file ready for Power BI or further analysis.
 
 🧰 Tech Stack
+
 Component	Description
+
 Python	Core data transformation logic
+
 Pandas / OpenPyXL	Excel processing and data cleaning
+
 Streamlit	Interactive web interface for upload, selection, and output
+
 Excel / Power BI	Final data destination and visualization layer
 
 <img width="1074" height="590" alt="Screenshot 2025-10-13 at 11 06 08" src="https://github.com/user-attachments/assets/d3e571f5-d7fd-4b13-9d7d-d781127b4bd7" />
